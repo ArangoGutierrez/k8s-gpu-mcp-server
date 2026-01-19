@@ -101,6 +101,19 @@ func (m *Mock) GetCudaDriverVersion(ctx context.Context) (string, error) {
 	return "12.9", nil
 }
 
+// GetMockDevice returns the MockDevice at the specified index for test
+// configuration. Returns nil if index is out of range.
+func (m *Mock) GetMockDevice(idx int) *MockDevice {
+	if idx < 0 || idx >= len(m.devices) {
+		return nil
+	}
+	return m.devices[idx]
+}
+
+// NVLinkTopology configures mock NVLink connections for testing.
+// Key: link index, Value: remote device index (-1 if not connected).
+type NVLinkTopology map[int]int
+
 // MockDevice is a mock implementation of the Device interface.
 type MockDevice struct {
 	UnimplementedDevice // Embedded for forward compatibility
@@ -128,6 +141,10 @@ type MockDevice struct {
 	memClock         uint32
 	tempShutdown     uint32
 	tempSlowdown     uint32
+
+	// NVLink configuration for testing
+	nvlinkTopology NVLinkTopology // link -> remote GPU index
+	nvlinkErrors   map[int]uint64 // link -> error count
 }
 
 // GetName returns the mock device name.
@@ -239,4 +256,67 @@ func (d *MockDevice) GetCudaComputeCapability(
 	ctx context.Context,
 ) (string, error) {
 	return "8.0", nil // A100 compute capability
+}
+
+// GetNvLinkState returns mock NVLink state for the specified link.
+func (d *MockDevice) GetNvLinkState(
+	ctx context.Context,
+	link int,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if d.nvlinkTopology == nil {
+		return false, nil // No NVLink support
+	}
+	_, connected := d.nvlinkTopology[link]
+	return connected, nil
+}
+
+// GetNvLinkRemotePciInfo returns mock PCI info for the remote device.
+func (d *MockDevice) GetNvLinkRemotePciInfo(
+	ctx context.Context,
+	link int,
+) (*PCIInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if d.nvlinkTopology == nil {
+		return nil, nil
+	}
+	remoteIdx, ok := d.nvlinkTopology[link]
+	if !ok || remoteIdx < 0 {
+		return nil, nil
+	}
+	return &PCIInfo{
+		BusID:  fmt.Sprintf("0000:%02x:00.0", remoteIdx+1),
+		Domain: 0,
+		Bus:    uint32(remoteIdx + 1),
+		Device: 0,
+	}, nil
+}
+
+// GetNvLinkErrorCounter returns mock error count for the specified link.
+func (d *MockDevice) GetNvLinkErrorCounter(
+	ctx context.Context,
+	link int,
+	counterType int,
+) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if d.nvlinkErrors == nil {
+		return 0, nil
+	}
+	return d.nvlinkErrors[link], nil
+}
+
+// SetNVLinkTopology configures mock NVLink connections for testing.
+func (d *MockDevice) SetNVLinkTopology(topology NVLinkTopology) {
+	d.nvlinkTopology = topology
+}
+
+// SetNVLinkErrors configures mock NVLink error counts for testing.
+func (d *MockDevice) SetNVLinkErrors(errors map[int]uint64) {
+	d.nvlinkErrors = errors
 }

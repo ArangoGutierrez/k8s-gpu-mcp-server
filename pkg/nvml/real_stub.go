@@ -150,3 +150,28 @@ func (d *RealDevice) GetCudaComputeCapability(
 ) (string, error) {
 	return "", ErrCGORequired
 }
+
+// GetNvLinkState returns an error indicating CGO is required.
+func (d *RealDevice) GetNvLinkState(
+	ctx context.Context,
+	link int,
+) (bool, error) {
+	return false, ErrCGORequired
+}
+
+// GetNvLinkRemotePciInfo returns an error indicating CGO is required.
+func (d *RealDevice) GetNvLinkRemotePciInfo(
+	ctx context.Context,
+	link int,
+) (*PCIInfo, error) {
+	return nil, ErrCGORequired
+}
+
+// GetNvLinkErrorCounter returns an error indicating CGO is required.
+func (d *RealDevice) GetNvLinkErrorCounter(
+	ctx context.Context,
+	link int,
+	counterType int,
+) (uint64, error) {
+	return 0, ErrCGORequired
+}

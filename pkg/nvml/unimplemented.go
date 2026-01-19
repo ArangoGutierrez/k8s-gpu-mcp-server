@@ -164,3 +164,28 @@ func (UnimplementedDevice) GetCudaComputeCapability(
 ) (string, error) {
 	return "", ErrNotImplemented
 }
+
+// GetNvLinkState returns ErrNotImplemented.
+func (UnimplementedDevice) GetNvLinkState(
+	_ context.Context,
+	_ int,
+) (bool, error) {
+	return false, ErrNotImplemented
+}
+
+// GetNvLinkRemotePciInfo returns ErrNotImplemented.
+func (UnimplementedDevice) GetNvLinkRemotePciInfo(
+	_ context.Context,
+	_ int,
+) (*PCIInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+// GetNvLinkErrorCounter returns ErrNotImplemented.
+func (UnimplementedDevice) GetNvLinkErrorCounter(
+	_ context.Context,
+	_ int,
+	_ int,
+) (uint64, error) {
+	return 0, ErrNotImplemented
+}
