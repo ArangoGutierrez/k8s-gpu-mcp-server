@@ -215,8 +215,9 @@ gateway:
   # When enabled, deploys a gateway that routes requests to node agents
   enabled: false
 
-  # -- Number of gateway replicas
-  replicas: 1
+  # -- Number of gateway replicas (2+ recommended for HA)
+  # When replicas > 1, a PodDisruptionBudget and pod anti-affinity are auto-configured
+  replicas: 2
 
   # -- Gateway HTTP port
   port: 8080

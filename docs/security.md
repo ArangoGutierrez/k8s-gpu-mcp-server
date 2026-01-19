@@ -244,6 +244,53 @@ helm template test ./deployment/helm/k8s-gpu-mcp-server \
 make validate-rbac
 ```
 
+## Gateway High Availability
+
+The gateway is the single entry point for all MCP clients. For production deployments,
+when the gateway is enabled, high availability configuration is used by default.
+
+### Default HA Configuration
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `gateway.replicas` | 2 | Eliminates single point of failure |
+| PodDisruptionBudget | Auto-created | Protects during voluntary disruptions |
+| Pod Anti-Affinity | Soft preference | Spreads replicas across nodes |
+
+### Production vs Development
+
+| Setting | Development | Production |
+|---------|-------------|------------|
+| `gateway.replicas` | 1 | 2+ (default) |
+| PDB | Not created | Auto-created |
+| Anti-affinity | Not applied | Applied |
+
+To disable HA for development/testing:
+
+```bash
+helm install gpu-mcp ./deployment/helm/k8s-gpu-mcp-server \
+  --set gateway.enabled=true \
+  --set gateway.replicas=1
+```
+
+### Verify HA Configuration
+
+```bash
+# Check replicas
+kubectl get deployment -n gpu-diagnostics \
+  -l app.kubernetes.io/component=gateway
+
+# Check PDB
+kubectl get pdb -n gpu-diagnostics
+
+# Simulate pod failure (gateway should remain available)
+POD=$(kubectl get pods -n gpu-diagnostics \
+  -l app.kubernetes.io/component=gateway \
+  --field-selector=status.phase=Running \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl delete pod -n gpu-diagnostics "$POD"
+```
+
 ## Troubleshooting
 
 ### "nodes is forbidden" Error
