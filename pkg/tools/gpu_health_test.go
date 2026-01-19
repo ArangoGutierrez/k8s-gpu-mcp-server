@@ -890,6 +890,25 @@ func (d *mockHealthyDevice) GetCudaComputeCapability(
 ) (string, error) {
 	return "7.5", nil // Turing (T4)
 }
+func (d *mockHealthyDevice) GetNvLinkState(
+	ctx context.Context,
+	link int,
+) (bool, error) {
+	return false, nil // T4 doesn't have NVLink
+}
+func (d *mockHealthyDevice) GetNvLinkRemotePciInfo(
+	ctx context.Context,
+	link int,
+) (*nvml.PCIInfo, error) {
+	return nil, nil
+}
+func (d *mockHealthyDevice) GetNvLinkErrorCounter(
+	ctx context.Context,
+	link int,
+	counterType int,
+) (uint64, error) {
+	return 0, nil
+}
 
 // mockEmptyNVML returns 0 devices
 type mockEmptyNVML struct{}

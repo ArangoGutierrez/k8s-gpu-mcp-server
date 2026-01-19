@@ -445,3 +445,80 @@ func (d *RealDevice) GetCudaComputeCapability(
 	}
 	return fmt.Sprintf("%d.%d", major, minor), nil
 }
+
+// GetNvLinkState returns whether the specified NVLink is active.
+func (d *RealDevice) GetNvLinkState(
+	ctx context.Context,
+	link int,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("%w: %w", ErrContextCancelled, err)
+	}
+
+	state, ret := d.device.GetNvLinkState(link)
+	if ret == nvml.ERROR_NOT_SUPPORTED {
+		return false, nil // NVLink not supported on this device
+	}
+	if ret != nvml.SUCCESS {
+		return false, fmt.Errorf("failed to get NVLink state: %s",
+			nvml.ErrorString(ret))
+	}
+	return state == nvml.FEATURE_ENABLED, nil
+}
+
+// GetNvLinkRemotePciInfo returns PCI info of the remote device.
+func (d *RealDevice) GetNvLinkRemotePciInfo(
+	ctx context.Context,
+	link int,
+) (*PCIInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrContextCancelled, err)
+	}
+
+	pci, ret := d.device.GetNvLinkRemotePciInfo(link)
+	if ret == nvml.ERROR_NOT_SUPPORTED || ret == nvml.ERROR_INVALID_ARGUMENT {
+		return nil, nil // NVLink not supported or link not connected
+	}
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get NVLink remote PCI info: %s",
+			nvml.ErrorString(ret))
+	}
+
+	// Convert BusId byte array to string
+	busID := string(pci.BusId[:])
+	for i, b := range pci.BusId {
+		if b == 0 {
+			busID = string(pci.BusId[:i])
+			break
+		}
+	}
+
+	return &PCIInfo{
+		BusID:  busID,
+		Domain: pci.Domain,
+		Bus:    pci.Bus,
+		Device: pci.Device,
+	}, nil
+}
+
+// GetNvLinkErrorCounter returns the error count for the specified link.
+func (d *RealDevice) GetNvLinkErrorCounter(
+	ctx context.Context,
+	link int,
+	counterType int,
+) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrContextCancelled, err)
+	}
+
+	count, ret := d.device.GetNvLinkErrorCounter(
+		link, nvml.NvLinkErrorCounter(counterType))
+	if ret == nvml.ERROR_NOT_SUPPORTED {
+		return 0, nil
+	}
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf("failed to get NVLink error counter: %s",
+			nvml.ErrorString(ret))
+	}
+	return count, nil
+}

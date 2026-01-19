@@ -90,6 +90,22 @@ type Device interface {
 	// GetCudaComputeCapability returns the CUDA compute capability as a
 	// string (e.g., "7.5" for Turing, "8.0" for Ampere).
 	GetCudaComputeCapability(ctx context.Context) (string, error)
+
+	// GetNvLinkState returns whether the specified NVLink is active.
+	// link: NVLink index (0 to MaxNvLinks-1 for the device).
+	// Returns false with nil error if NVLink is not supported.
+	GetNvLinkState(ctx context.Context, link int) (bool, error)
+
+	// GetNvLinkRemotePciInfo returns PCI info of the device at the remote
+	// end of the specified NVLink.
+	// Returns nil with nil error if NVLink is not supported or not connected.
+	GetNvLinkRemotePciInfo(ctx context.Context, link int) (*PCIInfo, error)
+
+	// GetNvLinkErrorCounter returns the error count for the specified link
+	// and counter type.
+	// counterType: NvLinkErrorDL, NvLinkErrorReplay, NvLinkErrorRecovery, etc.
+	// Returns 0 with nil error if NVLink is not supported.
+	GetNvLinkErrorCounter(ctx context.Context, link int, counterType int) (uint64, error)
 }
 
 // PCIInfo contains PCI bus information for a device.
@@ -217,4 +233,20 @@ const (
 const (
 	EccErrorCorrectable   = 0 // Single-bit correctable errors
 	EccErrorUncorrectable = 1 // Double-bit uncorrectable errors
+)
+
+// NVLink constants.
+const (
+	// MaxNvLinks is the maximum number of NVLink connections per GPU.
+	// Varies by architecture: A100=12, V100=6, consumer GPUs=0.
+	MaxNvLinks = 12
+)
+
+// NVLink error counter types for GetNvLinkErrorCounter.
+const (
+	NvLinkErrorDL       = 0 // Data link transmit/receive errors
+	NvLinkErrorReplay   = 1 // Replay errors (retransmissions)
+	NvLinkErrorRecovery = 2 // Recovery count
+	NvLinkErrorCRCFlit  = 3 // CRC errors on flits
+	NvLinkErrorCRCData  = 4 // CRC errors on data
 )

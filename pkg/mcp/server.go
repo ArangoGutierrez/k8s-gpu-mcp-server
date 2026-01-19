@@ -143,6 +143,10 @@ func New(cfg Config) (*Server, error) {
 			"analyze_xid_errors", routerOpts...)
 		mcpServer.AddTool(tools.GetAnalyzeXIDTool(), xidProxy.Handle)
 
+		nvlinkProxy := gateway.NewProxyHandler(cfg.K8sClient,
+			"get_nvlink_topology", routerOpts...)
+		mcpServer.AddTool(tools.GetNVLinkTopologyTool(), nvlinkProxy.Handle)
+
 		// Register K8s-native tools (don't need proxy, query K8s API directly)
 		podGPUHandler := tools.NewPodGPUAllocationHandler(
 			cfg.K8sClient.Clientset())
@@ -163,7 +167,8 @@ func New(cfg Config) (*Server, error) {
 			"namespace", cfg.Namespace,
 			"routingMode", cfg.RoutingMode,
 			"tools", []string{"get_gpu_inventory", "get_gpu_health",
-				"analyze_xid_errors", "get_pod_gpu_allocation", "describe_gpu_node"},
+				"analyze_xid_errors", "get_nvlink_topology",
+				"get_pod_gpu_allocation", "describe_gpu_node"},
 			"prompts", prompts.GetAllPromptNames(),
 			"version", cfg.Version,
 			"commit", cfg.GitCommit)
@@ -179,13 +184,17 @@ func New(cfg Config) (*Server, error) {
 		healthHandler := tools.NewGPUHealthHandler(cfg.NVMLClient)
 		mcpServer.AddTool(tools.GetGPUHealthTool(), healthHandler.Handle)
 
+		nvlinkHandler := tools.NewNVLinkTopologyHandler(cfg.NVMLClient)
+		mcpServer.AddTool(tools.GetNVLinkTopologyTool(), nvlinkHandler.Handle)
+
 		// Register prompts
 		registerPrompts(mcpServer)
 
 		klog.InfoS("MCP server initialized",
 			"mode", cfg.Mode,
 			"gateway", false,
-			"tools", []string{"get_gpu_inventory", "get_gpu_health", "analyze_xid_errors"},
+			"tools", []string{"get_gpu_inventory", "get_gpu_health",
+				"analyze_xid_errors", "get_nvlink_topology"},
 			"prompts", prompts.GetAllPromptNames(),
 			"version", cfg.Version,
 			"commit", cfg.GitCommit)
