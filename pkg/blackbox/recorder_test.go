@@ -5,6 +5,7 @@ package blackbox
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"runtime"
@@ -128,6 +129,112 @@ func TestRecorderConfig_BufferCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestRecorderConfig_BuilderMethods(t *testing.T) {
+	t.Parallel()
+
+	t.Run("WithInterval", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig().WithInterval(5 * time.Second)
+		if cfg.Interval != 5*time.Second {
+			t.Errorf("WithInterval() = %v, want 5s", cfg.Interval)
+		}
+		// Other fields unchanged
+		if cfg.Retention != DefaultRetention {
+			t.Errorf("Retention changed unexpectedly: %v", cfg.Retention)
+		}
+	})
+
+	t.Run("WithRetention", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig().WithRetention(1 * time.Hour)
+		if cfg.Retention != 1*time.Hour {
+			t.Errorf("WithRetention() = %v, want 1h", cfg.Retention)
+		}
+		// Other fields unchanged
+		if cfg.Interval != DefaultInterval {
+			t.Errorf("Interval changed unexpectedly: %v", cfg.Interval)
+		}
+	})
+
+	t.Run("WithProcesses", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig().WithProcesses(false)
+		if cfg.EnableProcesses != false {
+			t.Error("WithProcesses(false) did not disable processes")
+		}
+
+		cfg2 := cfg.WithProcesses(true)
+		if cfg2.EnableProcesses != true {
+			t.Error("WithProcesses(true) did not enable processes")
+		}
+	})
+
+	t.Run("chained builders", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig().
+			WithInterval(5 * time.Second).
+			WithRetention(1 * time.Hour).
+			WithProcesses(false)
+
+		if cfg.Interval != 5*time.Second {
+			t.Errorf("Interval = %v, want 5s", cfg.Interval)
+		}
+		if cfg.Retention != 1*time.Hour {
+			t.Errorf("Retention = %v, want 1h", cfg.Retention)
+		}
+		if cfg.EnableProcesses != false {
+			t.Error("EnableProcesses should be false")
+		}
+	})
+}
+
+func TestGPUSnapshot_GetTimestamp(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	snap := GPUSnapshot{
+		Timestamp: now,
+		UUID:      "GPU-TEST",
+	}
+
+	got := snap.GetTimestamp()
+	if !got.Equal(now) {
+		t.Errorf("GetTimestamp() = %v, want %v", got, now)
+	}
+}
+
+func TestRecorder_StartNVMLInitError(t *testing.T) {
+	t.Parallel()
+
+	// Use a mock that fails on Init
+	mock := &failingInitMock{}
+	config := testConfig()
+	recorder := NewRecorder(mock, config)
+
+	ctx := context.Background()
+	err := recorder.Start(ctx)
+
+	if err == nil {
+		recorder.Stop()
+		t.Fatal("Start() should fail when NVML Init fails")
+	}
+
+	if recorder.IsRunning() {
+		t.Error("recorder should not be running after failed Start()")
+	}
+}
+
+// failingInitMock is a mock that fails on Init for testing error paths.
+type failingInitMock struct {
+	nvml.UnimplementedInterface
+}
+
+func (m *failingInitMock) Init(ctx context.Context) error {
+	return errors.New("mock NVML init failure")
+}
+
+func (m *failingInitMock) Shutdown(ctx context.Context) error { return nil }
 
 func TestNewRecorder(t *testing.T) {
 	t.Parallel()
