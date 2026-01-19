@@ -1,0 +1,20 @@
+{{/*
+Copyright 2026 k8s-gpu-mcp-server contributors
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- if and .Values.gateway.enabled (gt (int .Values.gateway.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "k8s-gpu-mcp-server.fullname" . }}-gateway
+  namespace: {{ include "k8s-gpu-mcp-server.namespace" . }}
+  labels:
+    {{- include "k8s-gpu-mcp-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "k8s-gpu-mcp-server.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+{{- end }}

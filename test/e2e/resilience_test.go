@@ -156,6 +156,62 @@ func TestResilience_RetryAfterError(t *testing.T) {
 	t.Log("Retry consistency verified")
 }
 
+func TestResilience_GatewayHA(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping gateway HA test in short mode")
+	}
+
+	// Check if gateway has multiple replicas
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment",
+		helmReleaseName+"-k8s-gpu-mcp-server-gateway",
+		"-n", namespace,
+		"-o", "jsonpath={.spec.replicas}")
+	out, err := cmd.Output()
+	require.NoError(t, err)
+
+	replicas := strings.TrimSpace(string(out))
+	if replicas == "1" {
+		t.Skip("Gateway HA test requires replicas > 1")
+	}
+
+	t.Logf("Gateway has %s replicas, testing HA...", replicas)
+
+	// Initialize MCP session
+	sendMCPRequest(t, "initialize.json")
+
+	// Get gateway pods
+	cmd = exec.CommandContext(ctx, "kubectl", "get", "pods",
+		"-n", namespace,
+		"-l", "app.kubernetes.io/component=gateway",
+		"-o", "jsonpath={.items[*].metadata.name}")
+	out, err = cmd.Output()
+	require.NoError(t, err)
+
+	pods := strings.Fields(string(out))
+	require.GreaterOrEqual(t, len(pods), 2, "Expected at least 2 gateway pods")
+	t.Logf("Found gateway pods: %v", pods)
+
+	// Delete one gateway pod
+	podToDelete := pods[0]
+	t.Logf("Deleting gateway pod %s...", podToDelete)
+
+	deleteCmd := exec.CommandContext(ctx, "kubectl", "delete", "pod",
+		"-n", namespace, podToDelete, "--wait=false")
+	err = deleteCmd.Run()
+	require.NoError(t, err)
+
+	// Gateway should remain available via remaining pod(s)
+	time.Sleep(2 * time.Second)
+
+	t.Log("Testing request with one gateway pod deleted...")
+	resp := sendMCPRequest(t, "tools_call_inventory.json")
+
+	require.Nil(t, resp.Error, "Gateway should remain available during pod deletion")
+	require.NotNil(t, resp.Result, "Should return results from remaining gateway")
+
+	t.Log("Gateway HA verified: service remained available during pod deletion")
+}
+
 func TestResilience_CircuitBreakerMetrics(t *testing.T) {
 	// Check that circuit breaker metrics are exposed
 	resp, err := httpGet(gatewayURL + "/metrics")
