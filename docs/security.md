@@ -247,7 +247,7 @@ make validate-rbac
 ## Gateway High Availability
 
 The gateway is the single entry point for all MCP clients. For production deployments,
-high availability configuration is enabled by default.
+when the gateway is enabled, high availability configuration is used by default.
 
 ### Default HA Configuration
 
@@ -269,6 +269,7 @@ To disable HA for development/testing:
 
 ```bash
 helm install gpu-mcp ./deployment/helm/k8s-gpu-mcp-server \
+  --set gateway.enabled=true \
   --set gateway.replicas=1
 ```
 
@@ -283,10 +284,11 @@ kubectl get deployment -n gpu-diagnostics \
 kubectl get pdb -n gpu-diagnostics
 
 # Simulate pod failure (gateway should remain available)
-kubectl delete pod -n gpu-diagnostics \
+POD=$(kubectl get pods -n gpu-diagnostics \
   -l app.kubernetes.io/component=gateway \
   --field-selector=status.phase=Running \
-  | head -1
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl delete pod -n gpu-diagnostics "$POD"
 ```
 
 ## Troubleshooting
