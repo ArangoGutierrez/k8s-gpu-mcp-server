@@ -19,12 +19,24 @@ func (t timestampedItem) GetTimestamp() time.Time {
 	return t.ts
 }
 
+// mustNewRingBuffer creates a ring buffer or panics. For tests only.
+func mustNewRingBuffer[T any](capacity int) *RingBuffer[T] {
+	buf, err := NewRingBuffer[T](capacity)
+	if err != nil {
+		panic(err)
+	}
+	return buf
+}
+
 func TestNewRingBuffer(t *testing.T) {
 	t.Parallel()
 
 	t.Run("valid capacity", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](10)
+		buf, err := NewRingBuffer[int](10)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if buf.Capacity() != 10 {
 			t.Errorf("got capacity %d, want 10", buf.Capacity())
 		}
@@ -33,31 +45,27 @@ func TestNewRingBuffer(t *testing.T) {
 		}
 	})
 
-	t.Run("panics on zero capacity", func(t *testing.T) {
+	t.Run("error on zero capacity", func(t *testing.T) {
 		t.Parallel()
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for zero capacity")
-			}
-		}()
-		NewRingBuffer[int](0)
+		_, err := NewRingBuffer[int](0)
+		if err != ErrInvalidCapacity {
+			t.Errorf("got error %v, want ErrInvalidCapacity", err)
+		}
 	})
 
-	t.Run("panics on negative capacity", func(t *testing.T) {
+	t.Run("error on negative capacity", func(t *testing.T) {
 		t.Parallel()
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for negative capacity")
-			}
-		}()
-		NewRingBuffer[int](-1)
+		_, err := NewRingBuffer[int](-1)
+		if err != ErrInvalidCapacity {
+			t.Errorf("got error %v, want ErrInvalidCapacity", err)
+		}
 	})
 }
 
 func TestRingBuffer_Empty(t *testing.T) {
 	t.Parallel()
 
-	buf := NewRingBuffer[int](5)
+	buf := mustNewRingBuffer[int](5)
 
 	t.Run("size is zero", func(t *testing.T) {
 		if buf.Size() != 0 {
@@ -94,7 +102,7 @@ func TestRingBuffer_Add(t *testing.T) {
 
 	t.Run("single item", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](5)
+		buf := mustNewRingBuffer[int](5)
 		buf.Add(42)
 
 		if buf.Size() != 1 {
@@ -112,7 +120,7 @@ func TestRingBuffer_Add(t *testing.T) {
 
 	t.Run("multiple items", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](5)
+		buf := mustNewRingBuffer[int](5)
 		for i := 1; i <= 3; i++ {
 			buf.Add(i)
 		}
@@ -140,7 +148,7 @@ func TestRingBuffer_Add(t *testing.T) {
 
 	t.Run("fill to capacity", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](5)
+		buf := mustNewRingBuffer[int](5)
 		for i := 1; i <= 5; i++ {
 			buf.Add(i)
 		}
@@ -164,7 +172,7 @@ func TestRingBuffer_WrapAround(t *testing.T) {
 
 	t.Run("single wrap", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](5)
+		buf := mustNewRingBuffer[int](5)
 
 		// Add 7 items to a buffer of capacity 5
 		for i := 1; i <= 7; i++ {
@@ -197,7 +205,7 @@ func TestRingBuffer_WrapAround(t *testing.T) {
 
 	t.Run("multiple wraps", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](3)
+		buf := mustNewRingBuffer[int](3)
 
 		// Add 10 items to buffer of capacity 3
 		for i := 1; i <= 10; i++ {
@@ -222,7 +230,7 @@ func TestRingBuffer_Query(t *testing.T) {
 
 	t.Run("query recent items", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](10)
+		buf := mustNewRingBuffer[timestampedItem](10)
 
 		// Add items at 1-second intervals
 		for i := 0; i < 5; i++ {
@@ -252,7 +260,7 @@ func TestRingBuffer_Query(t *testing.T) {
 
 	t.Run("query all items", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](10)
+		buf := mustNewRingBuffer[timestampedItem](10)
 
 		for i := 0; i < 5; i++ {
 			buf.Add(timestampedItem{
@@ -274,7 +282,7 @@ func TestRingBuffer_Query(t *testing.T) {
 
 	t.Run("query no items", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](10)
+		buf := mustNewRingBuffer[timestampedItem](10)
 
 		for i := 0; i < 5; i++ {
 			buf.Add(timestampedItem{
@@ -296,7 +304,7 @@ func TestRingBuffer_Query(t *testing.T) {
 
 	t.Run("query with wraparound", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](5)
+		buf := mustNewRingBuffer[timestampedItem](5)
 
 		// Add 8 items, causing wrap
 		for i := 0; i < 8; i++ {
@@ -331,7 +339,7 @@ func TestRingBuffer_Latest(t *testing.T) {
 
 	t.Run("returns most recent", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[string](5)
+		buf := mustNewRingBuffer[string](5)
 
 		buf.Add("first")
 		buf.Add("second")
@@ -348,7 +356,7 @@ func TestRingBuffer_Latest(t *testing.T) {
 
 	t.Run("works after wraparound", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](3)
+		buf := mustNewRingBuffer[int](3)
 
 		for i := 1; i <= 5; i++ {
 			buf.Add(i)
@@ -369,7 +377,7 @@ func TestRingBuffer_All(t *testing.T) {
 
 	t.Run("returns chronological order", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](10)
+		buf := mustNewRingBuffer[int](10)
 
 		for i := 1; i <= 5; i++ {
 			buf.Add(i)
@@ -386,7 +394,7 @@ func TestRingBuffer_All(t *testing.T) {
 
 	t.Run("returns chronological after wrap", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](4)
+		buf := mustNewRingBuffer[int](4)
 
 		for i := 1; i <= 6; i++ {
 			buf.Add(i)
@@ -409,7 +417,7 @@ func TestRingBuffer_FindNearest(t *testing.T) {
 
 	t.Run("finds exact match", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](10)
+		buf := mustNewRingBuffer[timestampedItem](10)
 
 		for i := 0; i < 5; i++ {
 			buf.Add(timestampedItem{
@@ -433,7 +441,7 @@ func TestRingBuffer_FindNearest(t *testing.T) {
 
 	t.Run("finds closest when between items", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](10)
+		buf := mustNewRingBuffer[timestampedItem](10)
 
 		for i := 0; i < 5; i++ {
 			buf.Add(timestampedItem{
@@ -459,7 +467,7 @@ func TestRingBuffer_FindNearest(t *testing.T) {
 
 	t.Run("empty buffer returns false", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[timestampedItem](10)
+		buf := mustNewRingBuffer[timestampedItem](10)
 
 		_, ok := buf.FindNearest(time.Now(), func(item timestampedItem) time.Time {
 			return item.ts
@@ -476,7 +484,7 @@ func TestRingBuffer_QueryFunc(t *testing.T) {
 
 	t.Run("filters items", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](10)
+		buf := mustNewRingBuffer[int](10)
 
 		for i := 1; i <= 10; i++ {
 			buf.Add(i)
@@ -500,7 +508,7 @@ func TestRingBuffer_QueryFunc(t *testing.T) {
 
 	t.Run("no matches returns nil", func(t *testing.T) {
 		t.Parallel()
-		buf := NewRingBuffer[int](10)
+		buf := mustNewRingBuffer[int](10)
 
 		for i := 1; i <= 5; i++ {
 			buf.Add(i)
@@ -519,7 +527,7 @@ func TestRingBuffer_QueryFunc(t *testing.T) {
 func TestRingBuffer_Clear(t *testing.T) {
 	t.Parallel()
 
-	buf := NewRingBuffer[int](5)
+	buf := mustNewRingBuffer[int](5)
 
 	for i := 1; i <= 5; i++ {
 		buf.Add(i)
@@ -555,7 +563,7 @@ func TestRingBuffer_Clear(t *testing.T) {
 func TestRingBuffer_Concurrent(t *testing.T) {
 	t.Parallel()
 
-	buf := NewRingBuffer[int](100)
+	buf := mustNewRingBuffer[int](100)
 	var wg sync.WaitGroup
 
 	// Concurrent writers
@@ -599,7 +607,7 @@ func TestRingBuffer_ConcurrentReadWrite(t *testing.T) {
 	t.Parallel()
 
 	baseTime := time.Date(2026, 1, 19, 12, 0, 0, 0, time.UTC)
-	buf := NewRingBuffer[timestampedItem](50)
+	buf := mustNewRingBuffer[timestampedItem](50)
 
 	var wg sync.WaitGroup
 
@@ -643,7 +651,7 @@ func TestRingBuffer_ConcurrentReadWrite(t *testing.T) {
 // Benchmark tests
 
 func BenchmarkRingBuffer_Add(b *testing.B) {
-	buf := NewRingBuffer[int](1000)
+	buf := mustNewRingBuffer[int](1000)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -652,7 +660,7 @@ func BenchmarkRingBuffer_Add(b *testing.B) {
 }
 
 func BenchmarkRingBuffer_Latest(b *testing.B) {
-	buf := NewRingBuffer[int](1000)
+	buf := mustNewRingBuffer[int](1000)
 	for i := 0; i < 1000; i++ {
 		buf.Add(i)
 	}
@@ -664,7 +672,7 @@ func BenchmarkRingBuffer_Latest(b *testing.B) {
 }
 
 func BenchmarkRingBuffer_All(b *testing.B) {
-	buf := NewRingBuffer[int](1000)
+	buf := mustNewRingBuffer[int](1000)
 	for i := 0; i < 1000; i++ {
 		buf.Add(i)
 	}
@@ -677,7 +685,7 @@ func BenchmarkRingBuffer_All(b *testing.B) {
 
 func BenchmarkRingBuffer_Query(b *testing.B) {
 	baseTime := time.Now()
-	buf := NewRingBuffer[timestampedItem](1000)
+	buf := mustNewRingBuffer[timestampedItem](1000)
 	for i := 0; i < 1000; i++ {
 		buf.Add(timestampedItem{
 			ts:    baseTime.Add(time.Duration(i) * time.Second),

@@ -4,6 +4,7 @@
 package blackbox
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
@@ -14,9 +15,12 @@ type Timestamped interface {
 	GetTimestamp() time.Time
 }
 
-// RingBuffer is a generic, thread-safe circular buffer.
-// When the buffer is full, the oldest items are evicted to make room for new
-// ones. All operations are safe for concurrent use.
+// ErrInvalidCapacity is returned when creating a RingBuffer with capacity <= 0.
+var ErrInvalidCapacity = errors.New("ring buffer capacity must be > 0")
+
+// RingBuffer is a generic, thread-safe circular buffer. When the buffer is
+// full, the oldest items are evicted to make room for new ones. All
+// operations are safe for concurrent use.
 type RingBuffer[T any] struct {
 	mu       sync.RWMutex
 	data     []T
@@ -27,15 +31,15 @@ type RingBuffer[T any] struct {
 }
 
 // NewRingBuffer creates a new ring buffer with the specified capacity.
-// Capacity must be > 0; panics otherwise.
-func NewRingBuffer[T any](capacity int) *RingBuffer[T] {
+// Returns ErrInvalidCapacity if capacity <= 0.
+func NewRingBuffer[T any](capacity int) (*RingBuffer[T], error) {
 	if capacity <= 0 {
-		panic("ring buffer capacity must be > 0")
+		return nil, ErrInvalidCapacity
 	}
 	return &RingBuffer[T]{
 		data:     make([]T, capacity),
 		capacity: capacity,
-	}
+	}, nil
 }
 
 // Add inserts an item into the buffer.
@@ -87,7 +91,7 @@ func (r *RingBuffer[T]) Capacity() int {
 }
 
 // All returns all items in the buffer in chronological order (oldest first).
-// Returns an empty slice if the buffer is empty.
+// Returns nil if the buffer is empty.
 func (r *RingBuffer[T]) All() []T {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -111,8 +115,8 @@ func (r *RingBuffer[T]) All() []T {
 }
 
 // Query returns items newer than the given timestamp in chronological order.
-// The timeFn extracts the timestamp from an item. Returns nil if no items
-// match or the buffer is empty.
+// The timeFn extracts the timestamp from an item.
+// Returns nil if no items match or the buffer is empty.
 func (r *RingBuffer[T]) Query(since time.Time, timeFn func(T) time.Time) []T {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

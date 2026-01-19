@@ -41,8 +41,8 @@ type Recorder struct {
 	wg      sync.WaitGroup
 }
 
-// NewRecorder creates a new Flight Recorder.
-// The recorder must be started with Start() before it begins capturing data.
+// NewRecorder creates a new Flight Recorder. The recorder must be started
+// with Start() before it begins capturing data.
 func NewRecorder(
 	nvmlClient nvml.Interface,
 	config RecorderConfig,
@@ -113,9 +113,8 @@ func (r *Recorder) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully shuts down the recorder.
-// It waits for any in-progress sampling to complete.
-// Safe to call multiple times or if not started.
+// Stop gracefully shuts down the recorder. It waits for any in-progress
+// sampling to complete. Safe to call multiple times or if not started.
 func (r *Recorder) Stop() {
 	if !r.running.CompareAndSwap(true, false) {
 		return // Not running or already stopping
@@ -145,9 +144,12 @@ func (r *Recorder) GPUCount() int {
 }
 
 // GetSnapshot returns the snapshot nearest to the given time for the GPU.
-// Returns ErrGPUNotFound if the UUID is unknown, or ErrNoSnapshots if
-// no data has been captured yet.
-func (r *Recorder) GetSnapshot(gpuUUID string, at time.Time) (*GPUSnapshot, error) {
+// Returns ErrGPUNotFound if the UUID is unknown, or ErrNoSnapshots if no
+// data has been captured yet.
+func (r *Recorder) GetSnapshot(
+	gpuUUID string,
+	at time.Time,
+) (*GPUSnapshot, error) {
 	r.mu.RLock()
 	buf, ok := r.gpuBuffers[gpuUUID]
 	r.mu.RUnlock()
@@ -267,7 +269,16 @@ func (r *Recorder) discoverGPUs(ctx context.Context) error {
 			continue
 		}
 
-		r.gpuBuffers[uuid] = NewRingBuffer[GPUSnapshot](capacity)
+		buf, err := NewRingBuffer[GPUSnapshot](capacity)
+		if err != nil {
+			r.logger.Warn("failed to create buffer",
+				"index", i,
+				"uuid", uuid,
+				"error", err,
+			)
+			continue
+		}
+		r.gpuBuffers[uuid] = buf
 		r.logger.Debug("tracking GPU",
 			"index", i,
 			"uuid", uuid,
@@ -335,9 +346,18 @@ func (r *Recorder) sampleAllGPUs() {
 			// New GPU detected (hotplug), add buffer
 			r.mu.Lock()
 			if _, exists := r.gpuBuffers[snap.UUID]; !exists {
-				r.gpuBuffers[snap.UUID] = NewRingBuffer[GPUSnapshot](
+				newBuf, err := NewRingBuffer[GPUSnapshot](
 					r.config.BufferCapacity(),
 				)
+				if err != nil {
+					r.logger.Warn("failed to create buffer for hotplug GPU",
+						"uuid", snap.UUID,
+						"error", err,
+					)
+					r.mu.Unlock()
+					continue
+				}
+				r.gpuBuffers[snap.UUID] = newBuf
 				r.logger.Info("detected new GPU",
 					"uuid", snap.UUID,
 					"index", i,
