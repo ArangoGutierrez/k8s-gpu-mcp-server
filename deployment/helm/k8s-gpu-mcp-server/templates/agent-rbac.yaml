@@ -22,6 +22,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # K8s Events for event watcher (pkg/events)
+  # Required to watch Pod failures, OOMKills for GPU workload correlation
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
 {{- if eq .Values.agent.mode "operator" }}
   # Operator mode: allow pod eviction for kill_gpu_process (future)
   - apiGroups: [""]

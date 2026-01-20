@@ -28,6 +28,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # K8s Events for event watcher (pkg/events)
+  # Limited to events in the same namespace only
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
   # NOTE: Nodes are cluster-scoped resources and cannot be accessed
   # with a namespace-scoped Role. The describe_gpu_node tool will
   # return NVML-only data without K8s node metadata.
