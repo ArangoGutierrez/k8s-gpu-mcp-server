@@ -58,9 +58,6 @@ type K8sEvent struct {
 
 	// NodeName is the node where the Pod was scheduled.
 	NodeName string `json:"node_name"`
-
-	// ContainerID is the container ID if available from the event message.
-	ContainerID string `json:"container_id,omitempty"`
 }
 
 // GetTimestamp returns the event timestamp.
