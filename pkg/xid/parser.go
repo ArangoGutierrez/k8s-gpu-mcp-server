@@ -21,9 +21,31 @@ type XIDEvent struct {
 	XIDCode     int       `json:"xid_code"`
 	PCIBusID    string    `json:"pci_bus_id"`
 	GPUIndex    int       `json:"gpu_index"`
+	GPUUUID     string    `json:"gpu_uuid,omitempty"` // Resolved GPU UUID (set by consumer)
 	PID         int       `json:"pid,omitempty"`
 	ProcessName string    `json:"process_name,omitempty"`
+	PodName     string    `json:"pod_name,omitempty"`  // Correlated K8s pod name
+	Namespace   string    `json:"namespace,omitempty"` // K8s namespace
 	RawMessage  string    `json:"raw_message"`
+	Severity    string    `json:"severity,omitempty"`    // From XID code lookup (info/warning/critical/fatal)
+	Description string    `json:"description,omitempty"` // Human-readable description from codes.go
+}
+
+// GetTimestamp implements the blackbox.Timestamped interface.
+func (e XIDEvent) GetTimestamp() time.Time {
+	return e.Timestamp
+}
+
+// EnrichEvent populates Severity and Description from the XID code lookup table.
+// This is called automatically by the Watcher, but can be called manually
+// for events parsed via ParseKernelLogs().
+func EnrichEvent(event *XIDEvent) {
+	if event == nil {
+		return
+	}
+	info := LookupOrUnknown(event.XIDCode)
+	event.Severity = info.Severity
+	event.Description = info.Description
 }
 
 // Parser extracts XID error events from kernel dmesg output.
@@ -212,6 +234,9 @@ func (p *Parser) parseXIDLine(line string) *XIDEvent {
 	if nameMatches := p.processNameRegex.FindStringSubmatch(line); len(nameMatches) >= 2 {
 		event.ProcessName = nameMatches[1]
 	}
+
+	// Enrich with severity and description from codes.go
+	EnrichEvent(event)
 
 	return event
 }

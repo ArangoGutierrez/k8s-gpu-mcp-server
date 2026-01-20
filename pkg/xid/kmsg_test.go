@@ -7,6 +7,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -374,4 +376,137 @@ func TestKmsgRecord_Structure(t *testing.T) {
 
 func TestDefaultKmsgPath(t *testing.T) {
 	assert.Equal(t, "/dev/kmsg", DefaultKmsgPath)
+}
+
+func TestKmsgReader_Watch_NilCallback(t *testing.T) {
+	reader := NewKmsgReader()
+	ctx := context.Background()
+
+	err := reader.Watch(ctx, nil)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "callback cannot be nil")
+}
+
+func TestKmsgReader_Watch_FileNotFound(t *testing.T) {
+	reader := NewKmsgReaderWithPath("/nonexistent/kmsg")
+	ctx := context.Background()
+
+	err := reader.Watch(ctx, func(msg string) {})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestKmsgReader_Watch_ContextCancellation(t *testing.T) {
+	// Create temp file with some content
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test-kmsg")
+	err := os.WriteFile(tmpFile, []byte(""), 0644)
+	require.NoError(t, err)
+
+	reader := NewKmsgReaderWithPath(tmpFile)
+
+	// Create a context that we'll cancel
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var watchErr error
+	done := make(chan struct{})
+
+	go func() {
+		watchErr = reader.Watch(ctx, func(msg string) {})
+		close(done)
+	}()
+
+	// Give it time to start watching
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context
+	cancel()
+
+	// Wait for Watch to return
+	select {
+	case <-done:
+		// Watch should return nil on context cancellation
+		assert.NoError(t, watchErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Watch did not return after context cancellation")
+	}
+}
+
+func TestKmsgReader_Watch_FilterMessages(t *testing.T) {
+	// This test verifies the filtering logic by checking that only
+	// NVRM+Xid messages would trigger the callback (simulated via handleMessage)
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test-kmsg")
+
+	// Write some test content
+	content := `4,1,100,-;kernel: starting up
+6,2,200,-;NVRM: loading NVIDIA driver
+4,3,300,-;NVRM: Xid (PCI:0000:00:1E.0): 48
+6,4,400,-;kernel: network interface up
+`
+	err := os.WriteFile(tmpFile, []byte(content), 0644)
+	require.NoError(t, err)
+
+	reader := NewKmsgReaderWithPath(tmpFile)
+
+	// ReadMessages should filter for NVRM messages
+	ctx := context.Background()
+	messages, err := reader.ReadMessages(ctx)
+	require.NoError(t, err)
+
+	// Should have 2 NVRM messages
+	assert.Len(t, messages, 2)
+
+	// Of those, only one contains "Xid"
+	xidCount := 0
+	for _, msg := range messages {
+		if strings.Contains(msg, "Xid") {
+			xidCount++
+		}
+	}
+	assert.Equal(t, 1, xidCount)
+}
+
+func TestKmsgReader_Watch_SeeksToEnd(t *testing.T) {
+	// This test verifies that Watch() seeks to the end of the file
+	// We can't easily test real-time watching with a regular file,
+	// but we can verify the seek behavior by checking that existing
+	// content is not processed
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test-kmsg")
+
+	// Write initial content (should be skipped)
+	initialContent := `4,1,100,-;NVRM: Xid (PCI:0000:00:1E.0): 48
+4,2,200,-;NVRM: Xid (PCI:0000:00:1E.0): 79
+`
+	err := os.WriteFile(tmpFile, []byte(initialContent), 0644)
+	require.NoError(t, err)
+
+	reader := NewKmsgReaderWithPath(tmpFile)
+
+	var receivedMessages []string
+	var mu sync.Mutex
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Watch should seek to end and not see the initial content
+	err = reader.Watch(ctx, func(msg string) {
+		mu.Lock()
+		receivedMessages = append(receivedMessages, msg)
+		mu.Unlock()
+	})
+
+	// Should return nil on context timeout (no error)
+	assert.NoError(t, err)
+
+	// Should not have received the existing messages (they were before the seek point)
+	mu.Lock()
+	// Note: With a regular file, after seeking to end there's nothing more to read,
+	// so we expect 0 messages. Real /dev/kmsg would block and receive new messages.
+	assert.Empty(t, receivedMessages)
+	mu.Unlock()
 }

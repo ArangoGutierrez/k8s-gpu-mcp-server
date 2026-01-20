@@ -192,3 +192,86 @@ func (r *KmsgReader) IsAvailable() bool {
 	_ = file.Close()
 	return true
 }
+
+// Watch monitors /dev/kmsg for new messages in real-time.
+// It seeks to the end of the file and continuously reads new messages,
+// calling the callback for each NVRM message containing "Xid".
+//
+// Watch blocks until the context is cancelled or an error occurs.
+// Returns nil on context cancellation, error otherwise.
+//
+// Note: /dev/kmsg requires CAP_SYSLOG or root privileges.
+func (r *KmsgReader) Watch(ctx context.Context, callback func(string)) error {
+	if callback == nil {
+		return fmt.Errorf("callback cannot be nil")
+	}
+
+	// Check if /dev/kmsg exists and is readable
+	if _, err := os.Stat(r.path); os.IsNotExist(err) {
+		return fmt.Errorf("%s not found: %w", r.path, err)
+	}
+
+	// Open /dev/kmsg for reading
+	file, err := os.OpenFile(r.path, os.O_RDONLY, 0)
+	if err != nil {
+		if os.IsPermission(err) {
+			return fmt.Errorf("permission denied reading %s "+
+				"(requires CAP_SYSLOG or root): %w", r.path, err)
+		}
+		return fmt.Errorf("failed to open %s: %w", r.path, err)
+	}
+	defer func() {
+		_ = file.Close() // Intentionally ignore close error on read-only file
+	}()
+
+	// Seek to end to only read new messages
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		return fmt.Errorf("failed to seek to end of %s: %w", r.path, err)
+	}
+
+	// Create scanner for line-by-line reading
+	scanner := bufio.NewScanner(file)
+
+	// Polling interval for non-blocking behavior
+	const pollInterval = 100 * time.Millisecond
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		// Try to read next line
+		if scanner.Scan() {
+			line := scanner.Text()
+			record, err := parseKmsgRecord(line)
+			if err != nil {
+				continue // Skip malformed records
+			}
+
+			// Filter for NVIDIA XID messages only
+			if strings.Contains(record.Message, "NVRM") &&
+				strings.Contains(record.Message, "Xid") {
+				callback(record.Message)
+			}
+		} else {
+			// No data available or error
+			if err := scanner.Err(); err != nil {
+				// EAGAIN is expected for non-blocking read
+				if strings.Contains(err.Error(), "resource temporarily unavailable") {
+					// Reset scanner after EAGAIN
+					scanner = bufio.NewScanner(file)
+					time.Sleep(pollInterval)
+					continue
+				}
+				// Real error
+				return fmt.Errorf("error reading %s: %w", r.path, err)
+			}
+			// No more data, wait before retrying
+			time.Sleep(pollInterval)
+			// Reset scanner to pick up new data
+			scanner = bufio.NewScanner(file)
+		}
+	}
+}
