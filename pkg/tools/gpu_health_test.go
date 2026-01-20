@@ -909,6 +909,11 @@ func (d *mockHealthyDevice) GetNvLinkErrorCounter(
 ) (uint64, error) {
 	return 0, nil
 }
+func (d *mockHealthyDevice) GetComputeRunningProcesses(
+	ctx context.Context,
+) ([]nvml.ProcessInfoNVML, error) {
+	return []nvml.ProcessInfoNVML{}, nil
+}
 
 // mockEmptyNVML returns 0 devices
 type mockEmptyNVML struct{}

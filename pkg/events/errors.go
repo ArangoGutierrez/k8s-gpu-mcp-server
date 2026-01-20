@@ -13,3 +13,9 @@ var (
 	// ErrAlreadyStarted is returned when Start is called on a running watcher.
 	ErrAlreadyStarted = errors.New("watcher already started")
 )
+
+// ProcessMapper errors.
+var (
+	// ErrInvalidPID is returned when an invalid PID is provided.
+	ErrInvalidPID = errors.New("invalid PID")
+)

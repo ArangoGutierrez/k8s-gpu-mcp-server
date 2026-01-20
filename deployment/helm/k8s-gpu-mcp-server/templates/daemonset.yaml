@@ -150,17 +150,32 @@ spec:
           {{- /* RuntimeClass: No GPU resource request - monitors all GPUs */}}
           {{- toYaml .Values.resources | nindent 10 }}
           {{- end }}
-        {{- if .Values.xidAnalysis.enabled }}
+        {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled }}
         volumeMounts:
+        {{- if .Values.xidAnalysis.enabled }}
         - name: kmsg
           mountPath: /dev/kmsg
           readOnly: true
         {{- end }}
-      {{- if .Values.xidAnalysis.enabled }}
+        {{- if .Values.processTracking.enabled }}
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        {{- end }}
+        {{- end }}
+      {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled }}
       volumes:
+      {{- if .Values.xidAnalysis.enabled }}
       - name: kmsg
         hostPath:
           path: /dev/kmsg
           type: CharDevice
+      {{- end }}
+      {{- if .Values.processTracking.enabled }}
+      - name: host-proc
+        hostPath:
+          path: /proc
+          type: Directory
+      {{- end }}
       {{- end }}
 

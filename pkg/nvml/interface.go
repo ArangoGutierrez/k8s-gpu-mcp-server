@@ -106,6 +106,11 @@ type Device interface {
 	// counterType: NvLinkErrorDL, NvLinkErrorReplay, NvLinkErrorRecovery, etc.
 	// Returns 0 with nil error if NVLink is not supported.
 	GetNvLinkErrorCounter(ctx context.Context, link int, counterType int) (uint64, error)
+
+	// GetComputeRunningProcesses returns PIDs of processes using compute on
+	// this GPU. Returns empty slice if no processes or not supported.
+	// Used by the ProcessMapper to correlate GPU processes with K8s Pods.
+	GetComputeRunningProcesses(ctx context.Context) ([]ProcessInfoNVML, error)
 }
 
 // PCIInfo contains PCI bus information for a device.
@@ -250,3 +255,12 @@ const (
 	NvLinkErrorCRCFlit  = 3 // CRC errors on flits
 	NvLinkErrorCRCData  = 4 // CRC errors on data
 )
+
+// ProcessInfoNVML contains NVML process information.
+// Returned by GetComputeRunningProcesses to identify processes using GPU compute.
+type ProcessInfoNVML struct {
+	// PID is the process ID.
+	PID uint32
+	// UsedGPUMemory is the memory used by the process in bytes.
+	UsedGPUMemory uint64
+}

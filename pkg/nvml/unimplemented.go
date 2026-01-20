@@ -189,3 +189,10 @@ func (UnimplementedDevice) GetNvLinkErrorCounter(
 ) (uint64, error) {
 	return 0, ErrNotImplemented
 }
+
+// GetComputeRunningProcesses returns ErrNotImplemented.
+func (UnimplementedDevice) GetComputeRunningProcesses(
+	_ context.Context,
+) ([]ProcessInfoNVML, error) {
+	return nil, ErrNotImplemented
+}

@@ -145,6 +145,9 @@ type MockDevice struct {
 	// NVLink configuration for testing
 	nvlinkTopology NVLinkTopology // link -> remote GPU index
 	nvlinkErrors   map[int]uint64 // link -> error count
+
+	// Process tracking for testing
+	runningProcesses []ProcessInfoNVML
 }
 
 // GetName returns the mock device name.
@@ -319,4 +322,25 @@ func (d *MockDevice) SetNVLinkTopology(topology NVLinkTopology) {
 // SetNVLinkErrors configures mock NVLink error counts for testing.
 func (d *MockDevice) SetNVLinkErrors(errors map[int]uint64) {
 	d.nvlinkErrors = errors
+}
+
+// GetComputeRunningProcesses returns mock process list.
+func (d *MockDevice) GetComputeRunningProcesses(
+	ctx context.Context,
+) ([]ProcessInfoNVML, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if d.runningProcesses == nil {
+		return []ProcessInfoNVML{}, nil
+	}
+	// Return a copy to prevent mutation
+	result := make([]ProcessInfoNVML, len(d.runningProcesses))
+	copy(result, d.runningProcesses)
+	return result, nil
+}
+
+// SetRunningProcesses configures mock running processes for testing.
+func (d *MockDevice) SetRunningProcesses(procs []ProcessInfoNVML) {
+	d.runningProcesses = procs
 }

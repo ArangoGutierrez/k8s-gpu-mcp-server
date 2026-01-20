@@ -15,6 +15,24 @@ import (
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/nvml"
 )
 
+// ProcessResolver resolves process PIDs to Kubernetes Pod information.
+// This interface is satisfied by events.ProcessMapper.
+type ProcessResolver interface {
+	// GetPodForPID resolves a process ID to its Kubernetes Pod information.
+	// Returns nil if the process is not in a container or cannot be resolved.
+	GetPodForPID(ctx context.Context, pid int) (*PodInfo, error)
+}
+
+// PodInfo contains Kubernetes Pod information for a process.
+// Duplicated from events.PodInfo to avoid import cycle.
+type PodInfo struct {
+	PodUID        string
+	PodName       string
+	Namespace     string
+	ContainerID   string
+	ContainerName string
+}
+
 // Recorder errors.
 var (
 	ErrAlreadyStarted = errors.New("recorder already started")
@@ -34,6 +52,9 @@ type Recorder struct {
 	// State
 	gpuBuffers map[string]*RingBuffer[GPUSnapshot] // UUID -> buffer
 	mu         sync.RWMutex                        // Protects gpuBuffers
+
+	// Process mapping (optional)
+	processResolver ProcessResolver
 
 	// Lifecycle
 	running atomic.Bool
@@ -71,6 +92,16 @@ func WithLogger(logger *slog.Logger) RecorderOption {
 		if logger != nil {
 			r.logger = logger
 		}
+	}
+}
+
+// WithProcessResolver sets the ProcessResolver for PID-to-Pod resolution.
+// When set and config.EnableProcesses is true, snapshots will include
+// process information with K8s Pod metadata.
+// Use events.ProcessMapper to satisfy this interface.
+func WithProcessResolver(pr ProcessResolver) RecorderOption {
+	return func(r *Recorder) {
+		r.processResolver = pr
 	}
 }
 
@@ -425,5 +456,52 @@ func (r *Recorder) captureSnapshot(
 	snap.ECCCorrectable, _ = dev.GetTotalEccErrors(ctx, nvml.EccErrorCorrectable)
 	snap.ECCUncorrectable, _ = dev.GetTotalEccErrors(ctx, nvml.EccErrorUncorrectable)
 
+	// Process tracking (when enabled)
+	if r.config.EnableProcesses {
+		snap.Processes = r.captureProcesses(ctx, dev)
+	}
+
 	return snap, nil
+}
+
+// captureProcesses collects information about processes using the GPU.
+func (r *Recorder) captureProcesses(
+	ctx context.Context,
+	dev nvml.Device,
+) []ProcessInfo {
+	procs, err := dev.GetComputeRunningProcesses(ctx)
+	if err != nil {
+		r.logger.Debug("failed to get running processes", "error", err)
+		return nil
+	}
+
+	if len(procs) == 0 {
+		return nil
+	}
+
+	result := make([]ProcessInfo, 0, len(procs))
+	for _, p := range procs {
+		info := ProcessInfo{
+			PID:           int(p.PID),
+			UsedGPUMemory: p.UsedGPUMemory,
+		}
+
+		// Resolve PID to Pod if ProcessResolver is configured
+		if r.processResolver != nil {
+			podInfo, err := r.processResolver.GetPodForPID(ctx, int(p.PID))
+			if err != nil {
+				r.logger.Debug("failed to resolve PID to Pod",
+					"pid", p.PID, "error", err)
+			} else if podInfo != nil {
+				info.PodUID = podInfo.PodUID
+				info.PodName = podInfo.PodName
+				info.Namespace = podInfo.Namespace
+				info.ContainerName = podInfo.ContainerName
+			}
+		}
+
+		result = append(result, info)
+	}
+
+	return result
 }
