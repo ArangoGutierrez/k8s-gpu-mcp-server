@@ -13,7 +13,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -95,19 +94,17 @@ func (w *K8sWatcher) Start(ctx context.Context) error {
 		return ErrAlreadyStarted
 	}
 
-	// Create ListWatch with field selector for node-local events
-	// We watch events where the involved object is a Pod on our node
+	// Create ListWatch for Kubernetes events.
+	// Server-side node filtering is not supported for events; node-local
+	// filtering is applied in handleEvent via extractNodeName.
+	// Use context.Background() since informer lifecycle is managed via stopCh,
+	// not the context passed to Start().
 	listWatch := &cache.ListWatch{
 		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-			// Filter to events involving objects on this node
-			options.FieldSelector = fields.OneTermEqualSelector(
-				"involvedObject.fieldPath",
-				"",
-			).String()
-			return w.client.CoreV1().Events("").List(ctx, options)
+			return w.client.CoreV1().Events("").List(context.Background(), options)
 		},
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			return w.client.CoreV1().Events("").Watch(ctx, options)
+			return w.client.CoreV1().Events("").Watch(context.Background(), options)
 		},
 	}
 
