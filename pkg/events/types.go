@@ -9,8 +9,9 @@
 //
 // # Architecture
 //
-// The watcher uses a SharedInformer to efficiently watch K8s events with a
-// field selector filtering to node-local events only. Captured events are
+// The watcher uses a SharedInformer to watch K8s events cluster-wide.
+// Node-local filtering is applied in-memory since the K8s Event API does
+// not support server-side field selectors for node. Captured events are
 // stored in a bounded ring buffer and can be queried by time range or pod.
 //
 //	K8s API → SharedInformer → Filter → RingBuffer → Query API
