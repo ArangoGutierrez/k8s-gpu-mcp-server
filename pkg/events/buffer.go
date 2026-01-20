@@ -33,9 +33,7 @@ func (b *EventBuffer) Add(event K8sEvent) {
 // GetSince returns events newer than or equal to the given timestamp.
 // Events are returned in chronological order (oldest first).
 func (b *EventBuffer) GetSince(since time.Time) []K8sEvent {
-	return b.ring.Query(since, func(e K8sEvent) time.Time {
-		return e.Timestamp
-	})
+	return b.ring.Query(since, K8sEvent.GetTimestamp)
 }
 
 // GetForPod returns all events for the specified pod.
