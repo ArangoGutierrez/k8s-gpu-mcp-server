@@ -5,6 +5,7 @@ package events
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -371,7 +372,7 @@ func TestCacheEviction(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		mapper.cache[i+1000] = &cachedPodInfo{
 			Info: &blackbox.PodInfo{
-				PodName: "pod-" + string(rune('a'+i)),
+				PodName: fmt.Sprintf("pod-%d", i),
 			},
 			CachedAt: now.Add(-time.Duration(15-i) * time.Second), // Older first
 		}
