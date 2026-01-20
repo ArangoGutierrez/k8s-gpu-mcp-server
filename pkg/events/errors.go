@@ -12,7 +12,4 @@ var (
 
 	// ErrAlreadyStarted is returned when Start is called on a running watcher.
 	ErrAlreadyStarted = errors.New("watcher already started")
-
-	// ErrNotStarted is returned when Stop is called on a stopped watcher.
-	ErrNotStarted = errors.New("watcher not started")
 )
