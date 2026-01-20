@@ -244,8 +244,10 @@ func (w *K8sWatcher) handleEvent(obj interface{}) {
 	)
 
 	// Notify handlers
+	// Copy the slice to prevent race if RegisterHandler is called concurrently
 	w.mu.RLock()
-	handlers := w.handlers
+	handlers := make([]EventHandler, len(w.handlers))
+	copy(handlers, w.handlers)
 	w.mu.RUnlock()
 
 	for _, handler := range handlers {
