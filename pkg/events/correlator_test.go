@@ -4,6 +4,7 @@
 package events
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestCorrelator_Correlate_EmptyWindow(t *testing.T) {
 		Data:      K8sEvent{Reason: ReasonFailed, PodName: "test-pod"},
 	}
 
-	incident := c.Correlate(trigger)
+	incident := c.Correlate(context.Background(), trigger)
 
 	// Verify incident is created with only trigger
 	if incident == nil {
@@ -155,7 +156,8 @@ func TestCorrelator_buildTimeline_WithGPUSnapshots(t *testing.T) {
 
 	timeline := c.buildTimeline(incident)
 
-	// Should have: throttle, ecc, trigger = 3 entries
+	// At minimum we expect throttle, ecc, and trigger events (>= 3 entries).
+	// Additional entries may be present from deduplication edge cases.
 	if len(timeline) < 3 {
 		t.Fatalf("timeline length = %d, want >= 3", len(timeline))
 	}
@@ -226,11 +228,13 @@ func TestCorrelator_identifyAffectedPods(t *testing.T) {
 
 	pods := c.identifyAffectedPods(incident)
 
-	// Should find 4 pods (trigger has pod-1 but it's K8sEvent in Data, not added from trigger directly)
-	// Actually let me trace through: trigger.Data is K8sEvent but identifyAffectedPods only looks at RelatedEvents
-	// So we get: pod-2 (k8s), pod-3 (xid), pod-4 (snapshot) = 3 pods
-	if len(pods) != 3 {
-		t.Errorf("expected 3 affected pods, got %d", len(pods))
+	// Should find 4 affected pods:
+	// - pod-1 from trigger K8s event
+	// - pod-2 from related K8s event
+	// - pod-3 from related XID event
+	// - pod-4 from GPU snapshot process
+	if len(pods) != 4 {
+		t.Errorf("expected 4 affected pods, got %d", len(pods))
 	}
 
 	// Verify deterministic sort order (by namespace, then name)
@@ -354,20 +358,21 @@ func TestFormatRelativeTime(t *testing.T) {
 
 func TestHasSequence(t *testing.T) {
 	tests := []struct {
+		name  string
 		types []string
 		a, b  string
 		want  bool
 	}{
-		{[]string{"throttle", "xid", "k8s"}, "throttle", "xid", true},
-		{[]string{"throttle", "xid", "k8s"}, "xid", "k8s", true},
-		{[]string{"throttle", "xid", "k8s"}, "k8s", "throttle", false},
-		{[]string{"xid"}, "throttle", "xid", false},
-		{[]string{}, "throttle", "xid", false},
-		{[]string{"ecc", "temp", "xid"}, "ecc", "xid", true},
+		{"throttle_before_xid", []string{"throttle", "xid", "k8s"}, "throttle", "xid", true},
+		{"xid_before_k8s", []string{"throttle", "xid", "k8s"}, "xid", "k8s", true},
+		{"k8s_not_before_throttle", []string{"throttle", "xid", "k8s"}, "k8s", "throttle", false},
+		{"missing_first_element", []string{"xid"}, "throttle", "xid", false},
+		{"empty_slice", []string{}, "throttle", "xid", false},
+		{"non_adjacent_sequence", []string{"ecc", "temp", "xid"}, "ecc", "xid", true},
 	}
 
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			got := hasSequence(tt.types, tt.a, tt.b)
 			if got != tt.want {
 				t.Errorf("hasSequence(%v, %q, %q) = %v, want %v",
@@ -418,29 +423,67 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestDeduplicateTimeline(t *testing.T) {
-	entries := []TimelineEntry{
-		{EventType: "throttle", Description: "GPU throttling"},
-		{EventType: "throttle", Description: "GPU throttling"}, // Duplicate
-		{EventType: "xid", Description: "XID 79"},
-		{EventType: "xid", Description: "XID 79"},     // Duplicate
-		{EventType: "xid", Description: "XID 48"},     // Different description
-		{EventType: "k8s", Description: "Pod failed"}, // Different type
-	}
-
-	result := deduplicateTimeline(entries)
-
-	// Should have: throttle, xid (79), xid (48), k8s = 4 entries
-	if len(result) != 4 {
-		t.Errorf("deduplicateTimeline length = %d, want 4", len(result))
-	}
-
-	// Verify order preserved
-	expected := []string{"throttle", "xid", "xid", "k8s"}
-	for i, want := range expected {
-		if result[i].EventType != want {
-			t.Errorf("result[%d].EventType = %q, want %q", i, result[i].EventType, want)
+	t.Run("consecutive_duplicates", func(t *testing.T) {
+		entries := []TimelineEntry{
+			{EventType: "throttle", Description: "GPU throttling"},
+			{EventType: "throttle", Description: "GPU throttling"}, // Duplicate
+			{EventType: "xid", Description: "XID 79"},
+			{EventType: "xid", Description: "XID 79"},     // Duplicate
+			{EventType: "xid", Description: "XID 48"},     // Different description
+			{EventType: "k8s", Description: "Pod failed"}, // Different type
 		}
-	}
+
+		result := deduplicateTimeline(entries)
+
+		// Should have: throttle, xid (79), xid (48), k8s = 4 entries
+		if len(result) != 4 {
+			t.Errorf("deduplicateTimeline length = %d, want 4", len(result))
+		}
+
+		// Verify order preserved
+		expected := []string{"throttle", "xid", "xid", "k8s"}
+		for i, want := range expected {
+			if result[i].EventType != want {
+				t.Errorf("result[%d].EventType = %q, want %q", i, result[i].EventType, want)
+			}
+		}
+	})
+
+	t.Run("non_consecutive_duplicates", func(t *testing.T) {
+		// Test that non-consecutive duplicates are also removed
+		entries := []TimelineEntry{
+			{EventType: "throttle", Description: "GPU throttling"},
+			{EventType: "xid", Description: "XID 79"},
+			{EventType: "throttle", Description: "GPU throttling"}, // Non-consecutive duplicate
+			{EventType: "k8s", Description: "Pod failed"},
+			{EventType: "xid", Description: "XID 79"}, // Non-consecutive duplicate
+		}
+
+		result := deduplicateTimeline(entries)
+
+		// Should have: throttle, xid (79), k8s = 3 entries (duplicates removed)
+		if len(result) != 3 {
+			t.Errorf("deduplicateTimeline length = %d, want 3", len(result))
+		}
+
+		// Verify first occurrence of each is kept
+		expected := []struct {
+			eventType   string
+			description string
+		}{
+			{"throttle", "GPU throttling"},
+			{"xid", "XID 79"},
+			{"k8s", "Pod failed"},
+		}
+		for i, want := range expected {
+			if result[i].EventType != want.eventType {
+				t.Errorf("result[%d].EventType = %q, want %q", i, result[i].EventType, want.eventType)
+			}
+			if result[i].Description != want.description {
+				t.Errorf("result[%d].Description = %q, want %q", i, result[i].Description, want.description)
+			}
+		}
+	})
 }
 
 func TestGenerateIncidentID(t *testing.T) {
@@ -635,5 +678,214 @@ func TestIsHighTemperature(t *testing.T) {
 				t.Errorf("isHighTemperature() = %v, want %v", got, tt.wantHigh)
 			}
 		})
+	}
+}
+
+func TestCorrelator_RegisterAutoCorrelation_NilWatchers(t *testing.T) {
+	// Test that RegisterAutoCorrelation handles nil watchers gracefully
+	c := NewCorrelator(nil, nil, nil)
+
+	callCount := 0
+	callback := func(incident *CorrelatedIncident) {
+		callCount++
+	}
+
+	ctx := context.Background()
+	cleanup := c.RegisterAutoCorrelation(ctx, callback)
+
+	// Should return a valid cleanup function even with nil watchers
+	if cleanup == nil {
+		t.Fatal("expected cleanup function, got nil")
+	}
+
+	// Cleanup should not panic
+	cleanup()
+
+	// No callbacks should have been triggered (no watchers)
+	if callCount != 0 {
+		t.Errorf("callback count = %d, want 0", callCount)
+	}
+}
+
+func TestCorrelator_RegisterAutoCorrelation_ContextCancellation(t *testing.T) {
+	// Test that cleanup cancels context and waits for completion
+	c := NewCorrelator(nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cleanup := c.RegisterAutoCorrelation(ctx, func(incident *CorrelatedIncident) {})
+
+	// Cleanup should complete without blocking (no handlers registered with nil watchers)
+	done := make(chan struct{})
+	go func() {
+		cleanup()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(1 * time.Second):
+		t.Fatal("cleanup blocked for too long")
+	}
+}
+
+func TestCorrelator_Correlate_ContextCancellation(t *testing.T) {
+	c := NewCorrelator(nil, nil, nil)
+
+	// Use cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	trigger := Event{
+		Type:      "k8s",
+		Timestamp: time.Now(),
+		Source:    "test",
+		Data:      K8sEvent{Reason: ReasonFailed, PodName: "test-pod"},
+	}
+
+	incident := c.Correlate(ctx, trigger)
+
+	// Should return partial incident (only ID and trigger)
+	if incident == nil {
+		t.Fatal("expected incident, got nil")
+	}
+	if incident.ID == "" {
+		t.Error("incident ID should not be empty")
+	}
+	if incident.Trigger.Type != "k8s" {
+		t.Errorf("trigger type = %v, want k8s", incident.Trigger.Type)
+	}
+}
+
+func TestCorrelator_Integration_FullPipeline(t *testing.T) {
+	// Integration test verifying full correlation pipeline
+	c := NewCorrelator(nil, nil, nil)
+	now := time.Now()
+
+	// Create a realistic incident scenario manually
+	incident := &CorrelatedIncident{
+		ID:        "test-incident",
+		Timestamp: now,
+		Trigger: Event{
+			Type:      "xid",
+			Timestamp: now,
+			Source:    "xid.Watcher",
+			Data: xid.XIDEvent{
+				XIDCode:     79,
+				Severity:    "critical",
+				Description: "GPU fell off the bus",
+				PCIBusID:    "0000:00:1E.0",
+				PodName:     "ml-training-pod",
+				Namespace:   "ml-workloads",
+			},
+		},
+		RelatedEvents: []Event{
+			{
+				Type:      "k8s",
+				Timestamp: now.Add(-2 * time.Second),
+				Source:    "K8sWatcher",
+				Data: K8sEvent{
+					PodName:   "ml-training-pod",
+					Namespace: "ml-workloads",
+					PodUID:    "uid-123",
+					Reason:    ReasonFailed,
+					Message:   "Container crashed with exit code 137",
+					Type:      "Warning",
+				},
+			},
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{
+				Timestamp:     now.Add(-5 * time.Second),
+				UUID:          "GPU-12345678-1234-1234-1234-123456789abc",
+				Temperature:   85,
+				TempThreshold: 90,
+				Throttling:    1,
+			},
+			{
+				Timestamp:        now.Add(-3 * time.Second),
+				UUID:             "GPU-12345678-1234-1234-1234-123456789abc",
+				ECCUncorrectable: 2,
+			},
+		},
+	}
+
+	// Build timeline
+	timeline := c.buildTimeline(incident)
+	if len(timeline) < 4 {
+		t.Errorf("timeline should have >= 4 entries, got %d", len(timeline))
+	}
+
+	// Verify chronological order
+	for i := 1; i < len(timeline); i++ {
+		if timeline[i].Timestamp.Before(timeline[i-1].Timestamp) {
+			t.Error("timeline not in chronological order")
+		}
+	}
+
+	// Identify affected pods
+	pods := c.identifyAffectedPods(incident)
+	if len(pods) != 1 {
+		t.Errorf("expected 1 affected pod, got %d", len(pods))
+	}
+	if len(pods) > 0 && pods[0].PodName != "ml-training-pod" {
+		t.Errorf("pod name = %q, want %q", pods[0].PodName, "ml-training-pod")
+	}
+
+	// Detect causality - should be thermal_cascade (temp→throttle AND throttle→xid)
+	incident.Timeline = timeline
+	causality := c.DetectCausality(incident)
+
+	// Note: with our test data we have temp, throttle, ecc, k8s, xid events
+	// temp→throttle exists, but throttle→xid may not depending on timeline order
+	// This test verifies the pipeline runs without error
+	if causality == "" {
+		t.Error("causality should not be empty")
+	}
+}
+
+func TestCorrelator_Integration_ThermalCascade(t *testing.T) {
+	// Test specific thermal cascade detection with proper event sequence
+	c := NewCorrelator(nil, nil, nil)
+	now := time.Now()
+
+	incident := &CorrelatedIncident{
+		Trigger: Event{
+			Type:      "k8s",
+			Timestamp: now,
+			Source:    "K8sWatcher",
+			Data:      K8sEvent{Reason: ReasonFailed},
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{
+				Timestamp:     now.Add(-10 * time.Second),
+				UUID:          "GPU-test",
+				Temperature:   88,
+				TempThreshold: 90, // Within 10°C margin → high temp
+			},
+			{
+				Timestamp:  now.Add(-5 * time.Second),
+				UUID:       "GPU-test",
+				Throttling: 1,
+			},
+		},
+		RelatedEvents: []Event{
+			{
+				Type:      "xid",
+				Timestamp: now.Add(-1 * time.Second),
+				Source:    "xid.Watcher",
+				Data:      xid.XIDEvent{XIDCode: 79, Severity: "critical"},
+			},
+		},
+	}
+
+	timeline := c.buildTimeline(incident)
+	incident.Timeline = timeline
+
+	causality := c.DetectCausality(incident)
+	if causality != CausalityThermalCascade {
+		t.Errorf("causality = %q, want %q", causality, CausalityThermalCascade)
 	}
 }

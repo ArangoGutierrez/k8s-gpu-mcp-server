@@ -4,11 +4,13 @@
 package events
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/blackbox"
@@ -27,6 +29,23 @@ const (
 	ClockSkewTolerance = 1 * time.Second
 )
 
+// Display and threshold constants.
+const (
+	// TempThresholdMargin is the °C margin below slowdown threshold for early
+	// thermal warning detection.
+	TempThresholdMargin = 10
+
+	// AbsoluteHighTempThreshold is the default high temperature threshold (°C)
+	// used when no GPU-specific threshold is available.
+	AbsoluteHighTempThreshold = 85
+
+	// MaxMessageLength is the character limit for event message display.
+	MaxMessageLength = 80
+
+	// ShortUUIDLength is the prefix length for abbreviated GPU UUIDs in output.
+	ShortUUIDLength = 8
+)
+
 // Event represents a unified event from any source for correlation.
 type Event struct {
 	// Type indicates the event source: "xid", "k8s", "throttle", "ecc", "temp"
@@ -38,7 +57,8 @@ type Event struct {
 	// Source identifies the originating component.
 	Source string `json:"source"` // "xid.Watcher", "K8sWatcher", "blackbox.Recorder"
 
-	// Data contains the original event data.
+	// Data contains the original event data. Expected types:
+	// [xid.XIDEvent], [K8sEvent], or other source-specific event types.
 	Data any `json:"data"`
 }
 
@@ -74,7 +94,8 @@ type CorrelatedIncident struct {
 	// RelatedEvents contains all events within the correlation window.
 	RelatedEvents []Event `json:"related_events"`
 
-	// Timeline is a sorted list of all events with relative timestamps.
+	// Timeline is a chronologically sorted list of all events with relative
+	// timestamps. The trigger event appears at relative time "0s".
 	Timeline []TimelineEntry `json:"timeline"`
 
 	// GPUSnapshots contains GPU telemetry around the failure time.
@@ -184,7 +205,9 @@ func NewCorrelator(
 
 // Correlate builds a CorrelatedIncident around the trigger event.
 // It queries all event sources within the configured time window.
-func (c *Correlator) Correlate(trigger Event) *CorrelatedIncident {
+// The context is used for cancellation; a cancelled context returns early
+// with a partial incident.
+func (c *Correlator) Correlate(ctx context.Context, trigger Event) *CorrelatedIncident {
 	incident := &CorrelatedIncident{
 		ID:        generateIncidentID(),
 		Timestamp: trigger.Timestamp,
@@ -195,14 +218,27 @@ func (c *Correlator) Correlate(trigger Event) *CorrelatedIncident {
 	windowStart := trigger.Timestamp.Add(-c.windowSize - ClockSkewTolerance)
 	windowEnd := trigger.Timestamp.Add(c.windowSize + ClockSkewTolerance)
 
+	// Check context before each I/O operation
+	if ctx.Err() != nil {
+		return incident
+	}
+
 	// 1. Gather XID events in window
-	c.gatherXIDEvents(incident, windowStart, windowEnd)
+	c.gatherXIDEvents(ctx, incident, windowStart, windowEnd)
+
+	if ctx.Err() != nil {
+		return incident
+	}
 
 	// 2. Gather K8s events in window
-	c.gatherK8sEvents(incident, windowStart, windowEnd)
+	c.gatherK8sEvents(ctx, incident, windowStart, windowEnd)
+
+	if ctx.Err() != nil {
+		return incident
+	}
 
 	// 3. Get GPU snapshots around trigger time
-	c.gatherGPUSnapshots(incident, windowStart, windowEnd)
+	c.gatherGPUSnapshots(ctx, incident, windowStart, windowEnd)
 
 	// 4. Build sorted timeline
 	incident.Timeline = c.buildTimeline(incident)
@@ -226,6 +262,7 @@ func (c *Correlator) Correlate(trigger Event) *CorrelatedIncident {
 
 // gatherXIDEvents collects XID events within the time window.
 func (c *Correlator) gatherXIDEvents(
+	ctx context.Context,
 	incident *CorrelatedIncident,
 	windowStart, windowEnd time.Time,
 ) {
@@ -235,6 +272,9 @@ func (c *Correlator) gatherXIDEvents(
 
 	xidEvents := c.xidWatcher.GetEvents(windowStart)
 	for _, e := range xidEvents {
+		if ctx.Err() != nil {
+			return
+		}
 		if e.Timestamp.After(windowEnd) {
 			continue
 		}
@@ -249,6 +289,7 @@ func (c *Correlator) gatherXIDEvents(
 
 // gatherK8sEvents collects Kubernetes events within the time window.
 func (c *Correlator) gatherK8sEvents(
+	ctx context.Context,
 	incident *CorrelatedIncident,
 	windowStart, windowEnd time.Time,
 ) {
@@ -258,6 +299,9 @@ func (c *Correlator) gatherK8sEvents(
 
 	k8sEvents := c.k8sWatcher.GetEvents(windowStart)
 	for _, e := range k8sEvents {
+		if ctx.Err() != nil {
+			return
+		}
 		if e.Timestamp.After(windowEnd) {
 			continue
 		}
@@ -272,6 +316,7 @@ func (c *Correlator) gatherK8sEvents(
 
 // gatherGPUSnapshots collects GPU telemetry within the time window.
 func (c *Correlator) gatherGPUSnapshots(
+	ctx context.Context,
 	incident *CorrelatedIncident,
 	windowStart, windowEnd time.Time,
 ) {
@@ -281,6 +326,9 @@ func (c *Correlator) gatherGPUSnapshots(
 
 	snapshots := c.recorder.GetAllTimelines(c.lookback)
 	for _, timeline := range snapshots {
+		if ctx.Err() != nil {
+			return
+		}
 		for _, snap := range timeline {
 			if snap.Timestamp.Before(windowStart) || snap.Timestamp.After(windowEnd) {
 				continue
@@ -357,18 +405,15 @@ func (c *Correlator) buildTimeline(incident *CorrelatedIncident) []TimelineEntry
 	return entries
 }
 
-// identifyAffectedPods extracts Pod information from all event sources.
+// identifyAffectedPods extracts Pod information from all event sources,
+// including the trigger event and all related events.
 func (c *Correlator) identifyAffectedPods(incident *CorrelatedIncident) []AffectedPod {
 	podMap := make(map[string]*AffectedPod) // key: namespace/name
 
-	// From K8s events
-	for _, e := range incident.RelatedEvents {
-		if e.Type != "k8s" {
-			continue
-		}
-		k8sEvent, ok := e.Data.(K8sEvent)
-		if !ok || k8sEvent.PodName == "" {
-			continue
+	// Helper to add K8s event pod
+	addK8sPod := func(k8sEvent K8sEvent) {
+		if k8sEvent.PodName == "" {
+			return
 		}
 		key := k8sEvent.Namespace + "/" + k8sEvent.PodName
 		if _, exists := podMap[key]; !exists {
@@ -381,14 +426,10 @@ func (c *Correlator) identifyAffectedPods(incident *CorrelatedIncident) []Affect
 		}
 	}
 
-	// From XID events with Pod info
-	for _, e := range incident.RelatedEvents {
-		if e.Type != "xid" {
-			continue
-		}
-		xidEvent, ok := e.Data.(xid.XIDEvent)
-		if !ok || xidEvent.PodName == "" {
-			continue
+	// Helper to add XID event pod
+	addXIDPod := func(xidEvent xid.XIDEvent) {
+		if xidEvent.PodName == "" {
+			return
 		}
 		key := xidEvent.Namespace + "/" + xidEvent.PodName
 		if _, exists := podMap[key]; !exists {
@@ -397,6 +438,38 @@ func (c *Correlator) identifyAffectedPods(incident *CorrelatedIncident) []Affect
 				Namespace: xidEvent.Namespace,
 				Reason:    fmt.Sprintf("XID %d", xidEvent.XIDCode),
 			}
+		}
+	}
+
+	// From Trigger event first
+	switch incident.Trigger.Type {
+	case "k8s":
+		if k8sEvent, ok := incident.Trigger.Data.(K8sEvent); ok {
+			addK8sPod(k8sEvent)
+		}
+	case "xid":
+		if xidEvent, ok := incident.Trigger.Data.(xid.XIDEvent); ok {
+			addXIDPod(xidEvent)
+		}
+	}
+
+	// From K8s related events
+	for _, e := range incident.RelatedEvents {
+		if e.Type != "k8s" {
+			continue
+		}
+		if k8sEvent, ok := e.Data.(K8sEvent); ok {
+			addK8sPod(k8sEvent)
+		}
+	}
+
+	// From XID related events
+	for _, e := range incident.RelatedEvents {
+		if e.Type != "xid" {
+			continue
+		}
+		if xidEvent, ok := e.Data.(xid.XIDEvent); ok {
+			addXIDPod(xidEvent)
 		}
 	}
 
@@ -433,8 +506,9 @@ func (c *Correlator) identifyAffectedPods(incident *CorrelatedIncident) []Affect
 	return pods
 }
 
-// DetectCausality analyzes the incident timeline and returns a causality assessment.
-// Returns one of: thermal_cascade, memory_failure, software_oom, unknown.
+// DetectCausality analyzes the incident timeline and returns a causality
+// assessment. Returns one of [CausalityThermalCascade], [CausalityMemoryFailure],
+// [CausalitySoftwareOOM], or [CausalityUnknown].
 func (c *Correlator) DetectCausality(incident *CorrelatedIncident) string {
 	timeline := incident.Timeline
 
@@ -445,8 +519,9 @@ func (c *Correlator) DetectCausality(incident *CorrelatedIncident) string {
 	}
 
 	// Pattern: temp_elevated → throttle → xid → k8s(pod_failed)
-	// Thermal cascade: high temperature causes throttling, then XID error
-	if hasSequence(types, "temp", "throttle") || hasSequence(types, "throttle", "xid") {
+	// Thermal cascade: high temperature causes throttling, then XID error.
+	// Requires both temp→throttle AND throttle→xid sequences for full pattern.
+	if hasSequence(types, "temp", "throttle") && hasSequence(types, "throttle", "xid") {
 		return CausalityThermalCascade
 	}
 
@@ -492,21 +567,38 @@ func (c *Correlator) hasOOMEvent(incident *CorrelatedIncident) bool {
 	return false
 }
 
-// RegisterAutoCorrelation sets up handlers for automatic correlation on critical events.
-// Returns a cleanup function to unregister handlers.
-func (c *Correlator) RegisterAutoCorrelation(callback func(*CorrelatedIncident)) {
+// RegisterAutoCorrelation sets up handlers for automatic correlation on
+// critical events. Returns a cleanup function that stops the handlers and
+// waits for any in-flight correlations to complete. The context is used
+// for cancellation of correlation operations.
+func (c *Correlator) RegisterAutoCorrelation(
+	ctx context.Context,
+	callback func(*CorrelatedIncident),
+) func() {
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(ctx)
+
 	// Register XID handler for critical/fatal events
 	if c.xidWatcher != nil {
 		c.xidWatcher.RegisterHandler(func(event xid.XIDEvent) {
+			if ctx.Err() != nil {
+				return
+			}
 			if event.Severity == "critical" || event.Severity == "fatal" {
-				trigger := Event{
-					Type:      "xid",
-					Timestamp: event.Timestamp,
-					Source:    "xid.Watcher",
-					Data:      event,
-				}
-				incident := c.Correlate(trigger)
-				callback(incident)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					trigger := Event{
+						Type:      "xid",
+						Timestamp: event.Timestamp,
+						Source:    "xid.Watcher",
+						Data:      event,
+					}
+					incident := c.Correlate(ctx, trigger)
+					if ctx.Err() == nil {
+						callback(incident)
+					}
+				}()
 			}
 		})
 	}
@@ -514,17 +606,32 @@ func (c *Correlator) RegisterAutoCorrelation(callback func(*CorrelatedIncident))
 	// Register K8s handler for Warning events (OOMKilled, Failed, etc.)
 	if c.k8sWatcher != nil {
 		c.k8sWatcher.RegisterHandler(func(event K8sEvent) {
+			if ctx.Err() != nil {
+				return
+			}
 			if event.Type == "Warning" && (event.Reason == ReasonOOMKilled || event.Reason == ReasonFailed) {
-				trigger := Event{
-					Type:      "k8s",
-					Timestamp: event.Timestamp,
-					Source:    "K8sWatcher",
-					Data:      event,
-				}
-				incident := c.Correlate(trigger)
-				callback(incident)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					trigger := Event{
+						Type:      "k8s",
+						Timestamp: event.Timestamp,
+						Source:    "K8sWatcher",
+						Data:      event,
+					}
+					incident := c.Correlate(ctx, trigger)
+					if ctx.Err() == nil {
+						callback(incident)
+					}
+				}()
 			}
 		})
+	}
+
+	// Return cleanup function
+	return func() {
+		cancel()
+		wg.Wait()
 	}
 }
 
@@ -534,7 +641,9 @@ func (c *Correlator) RegisterAutoCorrelation(callback func(*CorrelatedIncident))
 func generateIncidentID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to timestamp-based ID on error
+		// Log and fallback to timestamp-based ID on error
+		slog.Warn("crypto/rand unavailable, using timestamp-based incident ID",
+			"error", err)
 		return fmt.Sprintf("inc-%d", time.Now().UnixNano())
 	}
 	return "inc-" + hex.EncodeToString(b)
@@ -581,7 +690,7 @@ func describeEvent(e Event) string {
 		}
 	case "k8s":
 		if k8sEvent, ok := e.Data.(K8sEvent); ok {
-			return fmt.Sprintf("[%s] %s: %s", k8sEvent.Reason, k8sEvent.PodName, truncate(k8sEvent.Message, 80))
+			return fmt.Sprintf("[%s] %s: %s", k8sEvent.Reason, k8sEvent.PodName, truncate(k8sEvent.Message, MaxMessageLength))
 		}
 	case "throttle":
 		return "GPU throttling active"
@@ -634,8 +743,8 @@ func severityFromECC(snap blackbox.GPUSnapshot) string {
 // formatThrottleDescription formats a throttling event description.
 func formatThrottleDescription(snap blackbox.GPUSnapshot) string {
 	uuid := snap.UUID
-	if len(uuid) > 8 {
-		uuid = uuid[:8]
+	if len(uuid) > ShortUUIDLength {
+		uuid = uuid[:ShortUUIDLength]
 	}
 	return fmt.Sprintf("GPU %s throttling active (reason: 0x%x)", uuid, snap.Throttling)
 }
@@ -643,8 +752,8 @@ func formatThrottleDescription(snap blackbox.GPUSnapshot) string {
 // formatECCDescription formats an ECC error description.
 func formatECCDescription(snap blackbox.GPUSnapshot) string {
 	uuid := snap.UUID
-	if len(uuid) > 8 {
-		uuid = uuid[:8]
+	if len(uuid) > ShortUUIDLength {
+		uuid = uuid[:ShortUUIDLength]
 	}
 	return fmt.Sprintf("GPU %s ECC errors: %d correctable, %d uncorrectable",
 		uuid, snap.ECCCorrectable, snap.ECCUncorrectable)
@@ -653,22 +762,22 @@ func formatECCDescription(snap blackbox.GPUSnapshot) string {
 // formatTempDescription formats a high temperature description.
 func formatTempDescription(snap blackbox.GPUSnapshot) string {
 	uuid := snap.UUID
-	if len(uuid) > 8 {
-		uuid = uuid[:8]
+	if len(uuid) > ShortUUIDLength {
+		uuid = uuid[:ShortUUIDLength]
 	}
 	return fmt.Sprintf("GPU %s temperature: %d°C (threshold: %d°C)",
 		uuid, snap.Temperature, snap.TempThreshold)
 }
 
 // isHighTemperature checks if temperature is approaching threshold.
-// Returns true if temperature is within 10°C of slowdown threshold.
+// Returns true if temperature is within TempThresholdMargin of slowdown threshold.
 func isHighTemperature(snap blackbox.GPUSnapshot) bool {
 	if snap.TempThreshold == 0 {
 		// No threshold available, use absolute limit
-		return snap.Temperature >= 85
+		return snap.Temperature >= AbsoluteHighTempThreshold
 	}
-	// Within 10 degrees of threshold
-	return snap.Temperature >= snap.TempThreshold-10
+	// Within margin of threshold
+	return snap.Temperature >= snap.TempThreshold-TempThresholdMargin
 }
 
 // hasSequence checks if events of type a appear before type b in the slice.
@@ -706,22 +815,21 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// deduplicateTimeline removes consecutive entries with same type and description.
+// deduplicateTimeline removes all entries with duplicate type+description,
+// keeping only the first occurrence of each unique combination.
 func deduplicateTimeline(entries []TimelineEntry) []TimelineEntry {
 	if len(entries) <= 1 {
 		return entries
 	}
 
+	seen := make(map[string]bool)
 	result := make([]TimelineEntry, 0, len(entries))
-	result = append(result, entries[0])
 
-	for i := 1; i < len(entries); i++ {
-		prev := result[len(result)-1]
-		curr := entries[i]
-
-		// Keep if different type or description
-		if curr.EventType != prev.EventType || curr.Description != prev.Description {
-			result = append(result, curr)
+	for _, entry := range entries {
+		key := entry.EventType + "|" + entry.Description
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, entry)
 		}
 	}
 
