@@ -122,6 +122,11 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        {{- if .Values.processTracking.enabled }}
+        {{- /* ProcessMapper requires host /proc mounted at /host/proc */}}
+        - name: PROC_PATH
+          value: "/host/proc"
+        {{- end }}
         {{- if .Values.gpu.runtimeClass.enabled }}
         {{- /* Required for nvidia-container-runtime to inject GPU libraries */}}
         {{- /* This enables GPU access without requesting nvidia.com/gpu resources */}}

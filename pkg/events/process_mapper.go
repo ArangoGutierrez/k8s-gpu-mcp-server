@@ -28,7 +28,9 @@ const (
 	// DefaultCacheSize is the maximum number of cached entries.
 	DefaultCacheSize = 1000
 
-	// DefaultRefreshInterval is how often to refresh Pod cache.
+	// DefaultRefreshInterval is the recommended interval for callers to use
+	// when setting up periodic RefreshPodCache() calls. The ProcessMapper does
+	// not automatically refresh; callers should use a ticker or similar.
 	DefaultRefreshInterval = 30 * time.Second
 )
 
@@ -37,9 +39,8 @@ type PodInfo = blackbox.PodInfo
 
 // cachedPodInfo wraps PodInfo with cache metadata.
 type cachedPodInfo struct {
-	Info        *blackbox.PodInfo
-	CachedAt    time.Time
-	LastChecked time.Time
+	Info     *blackbox.PodInfo
+	CachedAt time.Time
 }
 
 // ProcessMapper resolves GPU process PIDs to Kubernetes Pod information.
@@ -72,10 +73,22 @@ type ProcessMapper struct {
 // MapperOption configures a ProcessMapper.
 type MapperOption func(*ProcessMapper)
 
-// WithProcPath sets the /proc filesystem path (for testing).
+// WithProcPath sets the /proc filesystem path.
+// Use "/host/proc" for DaemonSet deployments where host procfs is mounted.
 func WithProcPath(path string) MapperOption {
 	return func(m *ProcessMapper) {
 		m.procPath = path
+	}
+}
+
+// WithProcPathFromEnv reads PROC_PATH from environment and sets the /proc path.
+// Falls back to "/proc" if PROC_PATH is not set. This is the recommended option
+// for production deployments where the Helm chart sets PROC_PATH=/host/proc.
+func WithProcPathFromEnv() MapperOption {
+	return func(m *ProcessMapper) {
+		if path := os.Getenv("PROC_PATH"); path != "" {
+			m.procPath = path
+		}
 	}
 }
 
@@ -122,6 +135,9 @@ func NewProcessMapper(
 	m := &ProcessMapper{
 		client:   client,
 		nodeName: nodeName,
+		// Default to /proc for local development/testing. In DaemonSet deployments,
+		// use WithProcPath("/host/proc") since the host's proc filesystem is mounted
+		// at /host/proc (see deployment/helm/k8s-gpu-mcp-server/templates/daemonset.yaml).
 		procPath: "/proc",
 		staleTTL: DefaultStaleTTL,
 		maxCache: DefaultCacheSize,
@@ -208,9 +224,8 @@ func (m *ProcessMapper) GetPodForPID(ctx context.Context, pid int) (*blackbox.Po
 	// Update cache
 	m.mu.Lock()
 	m.cache[pid] = &cachedPodInfo{
-		Info:        podInfo,
-		CachedAt:    now,
-		LastChecked: now,
+		Info:     podInfo,
+		CachedAt: now,
 	}
 	// Evict oldest entries if over capacity
 	if len(m.cache) > m.maxCache {
@@ -222,7 +237,8 @@ func (m *ProcessMapper) GetPodForPID(ctx context.Context, pid int) (*blackbox.Po
 }
 
 // RefreshPodCache refreshes the container ID to Pod mapping cache.
-// Call this periodically to ensure fresh mappings are available.
+// Call this periodically (e.g., every DefaultRefreshInterval) to ensure
+// fresh mappings are available. This is not called automatically.
 func (m *ProcessMapper) RefreshPodCache(ctx context.Context) error {
 	if m.client == nil {
 		return nil // No K8s client configured
@@ -349,10 +365,8 @@ func (m *ProcessMapper) parseCgroup(pid int) (string, error) {
 
 // extractContainerIDFromCgroup extracts container ID from a cgroup line.
 func extractContainerIDFromCgroup(line string) string {
-	// Skip non-kubepods hierarchies for cgroup v1
-	// For cgroup v2, the line starts with "0::"
-	if !strings.Contains(line, "kubepods") &&
-		!strings.HasPrefix(line, "0::") {
+	// Skip non-kubepods hierarchies (both cgroup v1 and v2 use kubepods path)
+	if !strings.Contains(line, "kubepods") {
 		return ""
 	}
 
