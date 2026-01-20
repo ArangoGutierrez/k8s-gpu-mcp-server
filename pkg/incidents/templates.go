@@ -59,23 +59,6 @@ Peak memory usage was {{.MemUsed | bytes}} of {{.MemTotal | bytes}} available ({
 
 3. **Medium Priority**: Consider requesting a GPU with more memory`,
 
-	"nvlink_degraded": `Your {{if .PodName}}{{.PodName}}{{else}}workload{{end}} job may have experienced performance issues due to NVLink degradation on Node {{.Node}}.
-
-The NVLink connection reported errors. Multi-GPU communication may have fallen back to PCIe, which is significantly slower.
-
-**This is a hardware issue. The job may have completed but slower than expected.**
-{{if .Timeline}}
-## Timeline
-{{range .Timeline}}- {{.Timestamp.Format "15:04:05"}} ({{.RelativeTime}}) - {{.Description}}
-{{end}}{{end}}
-## Recommended Actions
-1. **Medium Priority**: Check NVLink topology
-   ` + "`" + `nvidia-smi topo -m` + "`" + `
-
-2. **Medium Priority**: Report to infrastructure team
-
-3. **Low Priority**: Consider cordoning node if errors persist`,
-
 	"unknown": `Your {{if .PodName}}{{.PodName}}{{else}}workload{{end}} job experienced a GPU-related failure on Node {{.Node}}.
 
 {{if .XIDCode}}An XID {{.XIDCode}} error was detected{{if .XIDDescription}}: {{.XIDDescription}}{{end}}.{{end}}
@@ -99,6 +82,5 @@ var summaryTemplates = map[string]string{
 	"hardware_thermal": `GPU overheating on {{.Node}} caused {{if .PodName}}{{.PodName}}{{else}}your workload{{end}} to fail (not your code).`,
 	"hardware_memory":  `GPU memory hardware failure on {{.Node}} caused {{if .PodName}}{{.PodName}}{{else}}your workload{{end}} to fail (not your code).`,
 	"software_oom":     `{{if .PodName}}{{.PodName}}{{else}}Your workload{{end}} ran out of GPU memory ({{printf "%.0f" .MemPercent}}% used).`,
-	"nvlink_degraded":  `NVLink degradation detected on {{.Node}} - may have affected performance.`,
 	"unknown":          `GPU failure detected on {{.Node}} - manual investigation recommended.`,
 }
