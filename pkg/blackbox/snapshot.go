@@ -69,6 +69,9 @@ type ProcessInfo struct {
 	// PID is the process ID.
 	PID int `json:"pid"`
 
+	// UsedGPUMemory is the GPU memory used by this process in bytes.
+	UsedGPUMemory uint64 `json:"used_gpu_memory_bytes,omitempty"`
+
 	// PodUID is the Kubernetes Pod UID (if mapped).
 	PodUID string `json:"pod_uid,omitempty"`
 
@@ -77,6 +80,9 @@ type ProcessInfo struct {
 
 	// Namespace is the Kubernetes namespace (if mapped).
 	Namespace string `json:"namespace,omitempty"`
+
+	// ContainerName is the container name within the Pod (if mapped).
+	ContainerName string `json:"container_name,omitempty"`
 }
 
 // GetTimestamp returns the timestamp of this snapshot.

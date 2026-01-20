@@ -208,6 +208,15 @@ xidAnalysis:
   # Note: Also requires privileged: true in securityContext to read /dev/kmsg
   enabled: true
 
+# Process-to-Pod mapping configuration
+# Enables correlation of GPU processes with Kubernetes workloads
+processTracking:
+  # -- Enable /proc mount for PID-to-Pod mapping
+  # Required for Flight Recorder process tracking feature (config.EnableProcesses)
+  # Maps GPU process PIDs to Kubernetes Pod metadata via cgroup parsing
+  # Security note: Mounted read-only, only used to read /proc/<pid>/cgroup
+  enabled: true
+
 # Gateway configuration
 # Gateway provides a single MCP entry point for multi-node GPU clusters
 gateway:

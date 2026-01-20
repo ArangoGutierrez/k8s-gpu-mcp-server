@@ -522,3 +522,30 @@ func (d *RealDevice) GetNvLinkErrorCounter(
 	}
 	return count, nil
 }
+
+// GetComputeRunningProcesses returns PIDs of processes using compute on GPU.
+func (d *RealDevice) GetComputeRunningProcesses(
+	ctx context.Context,
+) ([]ProcessInfoNVML, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrContextCancelled, err)
+	}
+
+	procs, ret := d.device.GetComputeRunningProcesses()
+	if ret == nvml.ERROR_NOT_SUPPORTED {
+		return []ProcessInfoNVML{}, nil
+	}
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get running processes: %s",
+			nvml.ErrorString(ret))
+	}
+
+	result := make([]ProcessInfoNVML, len(procs))
+	for i, p := range procs {
+		result[i] = ProcessInfoNVML{
+			PID:           p.Pid,
+			UsedGPUMemory: p.UsedGpuMemory,
+		}
+	}
+	return result, nil
+}
