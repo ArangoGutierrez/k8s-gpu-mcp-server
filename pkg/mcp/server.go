@@ -158,6 +158,14 @@ func New(cfg Config) (*Server, error) {
 			cfg.K8sClient.Clientset(), nil)
 		mcpServer.AddTool(tools.GetDescribeGPUNodeTool(), describeHandler.Handle)
 
+		// explain_failure - flagship GPU failure analysis tool
+		// In gateway mode, correlator/recorder are nil, so handler
+		// falls back to minimal analysis based on K8s data only
+		explainHandler := tools.NewExplainFailureHandler(
+			cfg.K8sClient.Clientset(),
+		)
+		mcpServer.AddTool(tools.GetExplainFailureTool(), explainHandler.Handle)
+
 		// Register prompts
 		registerPrompts(mcpServer)
 
@@ -168,7 +176,8 @@ func New(cfg Config) (*Server, error) {
 			"routingMode", cfg.RoutingMode,
 			"tools", []string{"get_gpu_inventory", "get_gpu_health",
 				"analyze_xid_errors", "get_nvlink_topology",
-				"get_pod_gpu_allocation", "describe_gpu_node"},
+				"get_pod_gpu_allocation", "describe_gpu_node",
+				"explain_failure"},
 			"prompts", prompts.GetAllPromptNames(),
 			"version", cfg.Version,
 			"commit", cfg.GitCommit)
