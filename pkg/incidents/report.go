@@ -9,9 +9,9 @@ import (
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/events"
 )
 
-// IncidentReport is the analyzed output from the Analyzer.
-// It contains root cause analysis with confidence scoring and actionable
-// recommendations derived from pattern matching against known failure modes.
+// IncidentReport is the analyzed output from the Analyzer. It contains root
+// cause analysis with confidence scoring and actionable recommendations
+// derived from pattern matching against known failure modes.
 type IncidentReport struct {
 	// ID is the unique identifier for this incident (from CorrelatedIncident).
 	ID string `json:"id"`

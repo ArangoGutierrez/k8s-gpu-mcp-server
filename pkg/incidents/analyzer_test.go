@@ -4,6 +4,7 @@
 package incidents
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -181,8 +182,8 @@ func TestAnalyze_SoftwareOOM(t *testing.T) {
 		GPUSnapshots: []blackbox.GPUSnapshot{
 			{
 				Timestamp: time.Now(),
-				MemUsed:   15 * 1024 * 1024 * 1024, // 15GB
-				MemTotal:  16 * 1024 * 1024 * 1024, // 16GB (~94% used)
+				MemUsed:   31 * 512 * 1024 * 1024,  // 15.5GB (~97% of 16GB)
+				MemTotal:  16 * 1024 * 1024 * 1024, // 16GB
 			},
 		},
 		AffectedPods: []events.AffectedPod{
@@ -423,7 +424,7 @@ func TestAnalyze_RecommendationsTemplated(t *testing.T) {
 	foundNodeCmd := false
 	for _, rec := range report.Recommendations {
 		if rec.Command != "" {
-			if containsStr(rec.Command, "gpu-node-test") {
+			if strings.Contains(rec.Command, "gpu-node-test") {
 				foundNodeCmd = true
 				break
 			}
@@ -621,20 +622,4 @@ func TestKnownPatterns_HasRecommendations(t *testing.T) {
 			}
 		}
 	}
-}
-
-// Helper functions
-
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstr(s, substr)))
-}
-
-func findSubstr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

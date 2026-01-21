@@ -6,6 +6,7 @@ package incidents
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
 	"time"
@@ -36,8 +37,8 @@ func NewAnalyzerWithPatterns(patterns []FailurePattern) *Analyzer {
 	}
 }
 
-// Analyze performs pattern matching on a CorrelatedIncident and returns
-// an IncidentReport with confidence-scored root cause and recommendations.
+// Analyze performs pattern matching on a CorrelatedIncident and returns an
+// IncidentReport with confidence-scored root cause and recommendations.
 func (a *Analyzer) Analyze(incident *events.CorrelatedIncident) *IncidentReport {
 	if incident == nil {
 		return a.emptyReport()
@@ -278,6 +279,11 @@ func (a *Analyzer) evaluatePattern(pattern FailurePattern, ctx *analysisContext)
 				evidence = append(evidence, evStr)
 			}
 		}
+	}
+
+	// Cap confidence at 1.0
+	if confidence > 1.0 {
+		confidence = 1.0
 	}
 
 	return confidence, evidence
@@ -618,15 +624,19 @@ func (a *Analyzer) templateRecommendations(recs []Recommendation, report *Incide
 
 		if rec.Command != "" {
 			tmpl, err := template.New("cmd").Parse(rec.Command)
-			if err == nil {
-				var buf bytes.Buffer
-				if err := tmpl.Execute(&buf, data); err == nil {
-					newRec.Command = buf.String()
-				} else {
-					newRec.Command = rec.Command
-				}
-			} else {
+			if err != nil {
+				slog.Warn("failed to parse recommendation template",
+					"command", rec.Command, "error", err)
 				newRec.Command = rec.Command
+			} else {
+				var buf bytes.Buffer
+				if err := tmpl.Execute(&buf, data); err != nil {
+					slog.Warn("failed to execute recommendation template",
+						"command", rec.Command, "error", err)
+					newRec.Command = rec.Command
+				} else {
+					newRec.Command = buf.String()
+				}
 			}
 		}
 
@@ -662,10 +672,19 @@ func toUint32(v any) (uint32, bool) {
 	case uint32:
 		return val, true
 	case int:
+		if val < 0 {
+			return 0, false
+		}
 		return uint32(val), true
 	case int32:
+		if val < 0 {
+			return 0, false
+		}
 		return uint32(val), true
 	case int64:
+		if val < 0 {
+			return 0, false
+		}
 		return uint32(val), true
 	case uint:
 		return uint32(val), true
@@ -681,10 +700,19 @@ func toUint64(v any) (uint64, bool) {
 	case uint64:
 		return val, true
 	case int:
+		if val < 0 {
+			return 0, false
+		}
 		return uint64(val), true
 	case int32:
+		if val < 0 {
+			return 0, false
+		}
 		return uint64(val), true
 	case int64:
+		if val < 0 {
+			return 0, false
+		}
 		return uint64(val), true
 	case uint:
 		return uint64(val), true

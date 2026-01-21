@@ -3,9 +3,9 @@
 
 package incidents
 
-// FailurePattern defines a known GPU failure signature with weighted indicators.
-// When an incident matches multiple indicators, confidence is calculated as
-// the sum of matched indicator weights.
+// FailurePattern defines a known GPU failure signature with weighted
+// indicators. When an incident matches multiple indicators, confidence is
+// calculated as the sum of matched indicator weights.
 type FailurePattern struct {
 	// Name is the unique identifier for this pattern.
 	Name string
