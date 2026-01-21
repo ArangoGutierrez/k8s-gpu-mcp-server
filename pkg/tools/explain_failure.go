@@ -18,9 +18,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// Default time window for failure analysis.
-const DefaultTimeWindow = 30 * time.Minute
-
 // ExplainFailureHandler handles the explain_failure tool.
 type ExplainFailureHandler struct {
 	k8sClientset kubernetes.Interface
@@ -82,10 +79,11 @@ func NewExplainFailureHandler(
 
 // podFailure contains information about a failed pod.
 type podFailure struct {
-	pod       *corev1.Pod
-	failureTs time.Time
-	reason    string
-	message   string
+	pod           *corev1.Pod
+	failureTs     time.Time
+	reason        string
+	message       string
+	containerName string // Name of the failed container (empty for pod-level failures)
 }
 
 // findPodFailure locates the pod and extracts failure information.
@@ -121,14 +119,29 @@ func (h *ExplainFailureHandler) extractPodFailure(pod *corev1.Pod) *podFailure {
 		}
 	}
 
+	// Check init container statuses for terminated with error
+	// Init container failures are common in GPU workloads (e.g., NVIDIA device plugin init)
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			return &podFailure{
+				pod:           pod,
+				failureTs:     cs.State.Terminated.FinishedAt.Time,
+				reason:        cs.State.Terminated.Reason,
+				message:       cs.State.Terminated.Message,
+				containerName: cs.Name,
+			}
+		}
+	}
+
 	// Check container statuses for terminated with error
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
 			return &podFailure{
-				pod:       pod,
-				failureTs: cs.State.Terminated.FinishedAt.Time,
-				reason:    cs.State.Terminated.Reason,
-				message:   cs.State.Terminated.Message,
+				pod:           pod,
+				failureTs:     cs.State.Terminated.FinishedAt.Time,
+				reason:        cs.State.Terminated.Reason,
+				message:       cs.State.Terminated.Message,
+				containerName: cs.Name,
 			}
 		}
 	}
@@ -139,10 +152,11 @@ func (h *ExplainFailureHandler) extractPodFailure(pod *corev1.Pod) *podFailure {
 			term := cs.LastTerminationState.Terminated
 			if term.Reason == "OOMKilled" || term.ExitCode != 0 {
 				return &podFailure{
-					pod:       pod,
-					failureTs: term.FinishedAt.Time,
-					reason:    term.Reason,
-					message:   term.Message,
+					pod:           pod,
+					failureTs:     term.FinishedAt.Time,
+					reason:        term.Reason,
+					message:       term.Message,
+					containerName: cs.Name,
 				}
 			}
 		}
@@ -151,12 +165,17 @@ func (h *ExplainFailureHandler) extractPodFailure(pod *corev1.Pod) *podFailure {
 	return nil
 }
 
-// getConditionTime returns the transition time for a condition, or now if not found.
+// getConditionTime returns the transition time for a condition.
+// Falls back to pod creation time for reproducibility, or current time if neither is available.
 func getConditionTime(pod *corev1.Pod, condType corev1.PodConditionType) time.Time {
 	for _, c := range pod.Status.Conditions {
 		if c.Type == condType {
 			return c.LastTransitionTime.Time
 		}
+	}
+	// Fallback to pod creation time for reproducibility
+	if !pod.CreationTimestamp.IsZero() {
+		return pod.CreationTimestamp.Time
 	}
 	return time.Now()
 }
@@ -169,13 +188,13 @@ func (h *ExplainFailureHandler) Handle(
 	klog.InfoS("explain_failure invoked")
 
 	// 1. Parse arguments
-	podName, namespace, timeWindow, err := h.parseArgs(request)
+	podName, namespace, err := h.parseArgs(request)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	klog.V(4).InfoS("explain_failure args",
-		"pod", podName, "namespace", namespace, "window", timeWindow)
+		"pod", podName, "namespace", namespace)
 
 	// 2. Find the pod and verify failure
 	failure, err := h.findPodFailure(ctx, podName, namespace)
@@ -217,17 +236,17 @@ func (h *ExplainFailureHandler) Handle(
 // parseArgs extracts and validates arguments from the request.
 func (h *ExplainFailureHandler) parseArgs(
 	request mcp.CallToolRequest,
-) (podName, namespace string, timeWindow time.Duration, err error) {
+) (podName, namespace string, err error) {
 	args := request.GetArguments()
 
 	// pod_name (required)
 	podNameRaw, ok := args["pod_name"]
 	if !ok || podNameRaw == nil {
-		return "", "", 0, fmt.Errorf("pod_name is required")
+		return "", "", fmt.Errorf("pod_name is required")
 	}
 	podName, ok = podNameRaw.(string)
 	if !ok || podName == "" {
-		return "", "", 0, fmt.Errorf("pod_name must be a non-empty string")
+		return "", "", fmt.Errorf("pod_name must be a non-empty string")
 	}
 
 	// namespace (optional, default from handler)
@@ -238,17 +257,7 @@ func (h *ExplainFailureHandler) parseArgs(
 		}
 	}
 
-	// time_window (optional, default 30m)
-	timeWindow = DefaultTimeWindow
-	if twRaw, ok := args["time_window"]; ok && twRaw != nil {
-		if twStr, ok := twRaw.(string); ok && twStr != "" {
-			if parsed, parseErr := time.ParseDuration(twStr); parseErr == nil {
-				timeWindow = parsed
-			}
-		}
-	}
-
-	return podName, namespace, timeWindow, nil
+	return podName, namespace, nil
 }
 
 // buildTriggerEvent creates a trigger Event from pod failure.
@@ -312,6 +321,7 @@ type PodSummary struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	Node      string `json:"node"`
+	Container string `json:"container,omitempty"` // Name of the failed container (if applicable)
 }
 
 // GPUSummary contains GPU identification.
@@ -347,6 +357,7 @@ func (h *ExplainFailureHandler) buildResponse(
 			Name:      failure.pod.Name,
 			Namespace: failure.pod.Namespace,
 			Node:      failure.pod.Spec.NodeName,
+			Container: failure.containerName,
 		},
 		RootCause: RootCauseSummary{
 			Category:    report.RootCause.Category,
@@ -405,9 +416,6 @@ func GetExplainFailureTool() mcp.Tool {
 		),
 		mcp.WithString("namespace",
 			mcp.Description("Kubernetes namespace (default: current namespace)"),
-		),
-		mcp.WithString("time_window",
-			mcp.Description("How far back to analyze (default: 30m). Examples: 10m, 1h, 2h"),
 		),
 	)
 }
