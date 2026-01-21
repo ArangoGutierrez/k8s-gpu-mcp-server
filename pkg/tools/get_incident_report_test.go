@@ -443,9 +443,7 @@ func TestGetIncidentReportHandler_WithOptions(t *testing.T) {
 	})
 }
 
-func TestGetIncidentReportHandler_extractPodFailureForReport(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
-
+func TestExtractPodFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		pod           *corev1.Pod
@@ -539,7 +537,7 @@ func TestGetIncidentReportHandler_extractPodFailureForReport(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			failure := handler.extractPodFailureForReport(tt.pod)
+			failure := ExtractPodFailure(tt.pod)
 
 			if tt.wantFailure && failure == nil {
 				t.Error("expected failure, got nil")
@@ -547,11 +545,97 @@ func TestGetIncidentReportHandler_extractPodFailureForReport(t *testing.T) {
 			if !tt.wantFailure && failure != nil {
 				t.Errorf("expected no failure, got %+v", failure)
 			}
-			if failure != nil && failure.reason != tt.wantReason {
-				t.Errorf("expected reason %s, got %s", tt.wantReason, failure.reason)
+			if failure != nil && failure.Reason != tt.wantReason {
+				t.Errorf("expected reason %s, got %s", tt.wantReason, failure.Reason)
 			}
-			if failure != nil && failure.containerName != tt.wantContainer {
-				t.Errorf("expected container %q, got %q", tt.wantContainer, failure.containerName)
+			if failure != nil && failure.ContainerName != tt.wantContainer {
+				t.Errorf("expected container %q, got %q", tt.wantContainer, failure.ContainerName)
+			}
+		})
+	}
+}
+
+func TestCalculateAnalysisDuration(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		incident *events.CorrelatedIncident
+		want     string
+	}{
+		{
+			name: "empty timeline returns default",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{},
+			},
+			want: "30m",
+		},
+		{
+			name: "single entry returns default",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{
+					{Timestamp: now},
+				},
+			},
+			want: "30m",
+		},
+		{
+			name: "5 minute duration",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{
+					{Timestamp: now},
+					{Timestamp: now.Add(5 * time.Minute)},
+				},
+			},
+			want: "5m0s",
+		},
+		{
+			name: "90 second duration",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{
+					{Timestamp: now},
+					{Timestamp: now.Add(90 * time.Second)},
+				},
+			},
+			want: "2m0s", // rounds to minutes
+		},
+		{
+			name: "30 second duration",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{
+					{Timestamp: now},
+					{Timestamp: now.Add(30 * time.Second)},
+				},
+			},
+			want: "30s",
+		},
+		{
+			name: "2 hour duration",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{
+					{Timestamp: now},
+					{Timestamp: now.Add(2 * time.Hour)},
+				},
+			},
+			want: "2h0m0s",
+		},
+		{
+			name: "zero timestamps return default",
+			incident: &events.CorrelatedIncident{
+				Timeline: []events.TimelineEntry{
+					{Timestamp: time.Time{}},
+					{Timestamp: time.Time{}},
+				},
+			},
+			want: "30m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateAnalysisDuration(tt.incident)
+			if got != tt.want {
+				t.Errorf("calculateAnalysisDuration() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -622,63 +706,85 @@ func TestGetIncidentReportHandler_Handle_DefaultNamespace(t *testing.T) {
 	}
 }
 
-func TestGetReportConditionTime(t *testing.T) {
-	now := time.Now()
-	creationTime := now.Add(-1 * time.Hour)
-	conditionTime := now.Add(-30 * time.Minute)
+func TestGetIncidentReportHandler_Handle_NilAnalyzer(t *testing.T) {
+	//nolint:staticcheck // NewSimpleClientset used for testing
+	clientset := fake.NewSimpleClientset()
+	handler := NewGetIncidentReportHandler(clientset,
+		WithIncidentAnalyzer(nil), // Force nil
+	)
 
-	tests := []struct {
-		name     string
-		pod      *corev1.Pod
-		condType corev1.PodConditionType
-		want     time.Time
-		approx   bool
-	}{
-		{
-			name: "condition exists",
-			pod: &corev1.Pod{
-				Status: corev1.PodStatus{
-					Conditions: []corev1.PodCondition{{
-						Type:               corev1.PodReady,
-						LastTransitionTime: metav1.Time{Time: conditionTime},
-					}},
-				},
+	// Pre-cache an incident to bypass lookup
+	incident := &events.CorrelatedIncident{
+		ID:        "nil-analyzer-test",
+		Timestamp: time.Now(),
+		Trigger: events.Event{
+			Type:      "k8s",
+			Timestamp: time.Now(),
+			Data: events.K8sEvent{
+				PodName:   "test-pod",
+				Namespace: "default",
 			},
-			condType: corev1.PodReady,
-			want:     conditionTime,
 		},
-		{
-			name: "condition missing fallback to creation",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: creationTime},
-				},
-			},
-			condType: corev1.PodReady,
-			want:     creationTime,
-		},
-		{
-			name:     "no condition no creation returns now",
-			pod:      &corev1.Pod{},
-			condType: corev1.PodReady,
-			approx:   true,
-		},
+		AffectedPods: []events.AffectedPod{{
+			PodName:   "test-pod",
+			Namespace: "default",
+		}},
+	}
+	handler.CacheIncident(incident)
+
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{
+		"incident_id": "nil-analyzer-test",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := getReportConditionTime(tt.pod, tt.condType)
+	result, err := handler.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-			if tt.approx {
-				if time.Since(got) > time.Second {
-					t.Errorf("getReportConditionTime() = %v, expected recent time", got)
-				}
-			} else {
-				if !got.Equal(tt.want) {
-					t.Errorf("getReportConditionTime() = %v, want %v", got, tt.want)
-				}
-			}
-		})
+	if !result.IsError {
+		t.Error("expected error result when analyzer is nil")
+	}
+}
+
+func TestGetIncidentReportHandler_Handle_NilExplainer(t *testing.T) {
+	//nolint:staticcheck // NewSimpleClientset used for testing
+	clientset := fake.NewSimpleClientset()
+	handler := NewGetIncidentReportHandler(clientset,
+		WithIncidentExplainer(nil), // Force nil
+	)
+
+	// Pre-cache an incident to bypass lookup
+	incident := &events.CorrelatedIncident{
+		ID:        "nil-explainer-test",
+		Timestamp: time.Now(),
+		Trigger: events.Event{
+			Type:      "k8s",
+			Timestamp: time.Now(),
+			Data: events.K8sEvent{
+				PodName:   "test-pod",
+				Namespace: "default",
+			},
+		},
+		AffectedPods: []events.AffectedPod{{
+			PodName:   "test-pod",
+			Namespace: "default",
+		}},
+	}
+	handler.CacheIncident(incident)
+
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{
+		"incident_id": "nil-explainer-test",
+	}
+
+	result, err := handler.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result when explainer is nil")
 	}
 }
 

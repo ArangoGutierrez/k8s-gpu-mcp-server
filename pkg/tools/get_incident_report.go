@@ -15,21 +15,10 @@ import (
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/incidents"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/xid"
 	"github.com/mark3labs/mcp-go/mcp"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
-
-// reportPodFailure contains information about a failed pod.
-// This is a local type for get_incident_report to be self-contained.
-type reportPodFailure struct {
-	pod           *corev1.Pod
-	failureTs     time.Time
-	reason        string
-	message       string
-	containerName string
-}
 
 // GetIncidentReportHandler handles the get_incident_report tool.
 type GetIncidentReportHandler struct {
@@ -141,9 +130,19 @@ func (h *GetIncidentReportHandler) Handle(
 	}
 
 	// 3. Analyze root cause
+	if h.analyzer == nil {
+		err := fmt.Errorf("incident analyzer is not configured")
+		klog.ErrorS(err, "unable to analyze incident")
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	report := h.analyzer.Analyze(incident)
 
 	// 4. Generate explanation
+	if h.explainer == nil {
+		err := fmt.Errorf("incident explainer is not configured")
+		klog.ErrorS(err, "unable to generate incident explanation")
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	explanation := h.explainer.GenerateExplanation(incident)
 
 	// 5. Build response with optional data
@@ -266,7 +265,7 @@ func (h *GetIncidentReportHandler) lookupByPod(
 	}
 
 	// Check for failure and extract trigger
-	failure := h.extractPodFailureForReport(pod)
+	failure := ExtractPodFailure(pod)
 	if failure == nil {
 		return nil, fmt.Errorf("pod %s/%s has no recorded failure", namespace, podName)
 	}
@@ -274,13 +273,13 @@ func (h *GetIncidentReportHandler) lookupByPod(
 	// Build trigger event
 	trigger := events.Event{
 		Type:      "k8s",
-		Timestamp: failure.failureTs,
+		Timestamp: failure.FailureTs,
 		Source:    "get_incident_report",
 		Data: events.K8sEvent{
-			Timestamp: failure.failureTs,
+			Timestamp: failure.FailureTs,
 			Type:      "Warning",
-			Reason:    failure.reason,
-			Message:   failure.message,
+			Reason:    failure.Reason,
+			Message:   failure.Message,
 			PodName:   pod.Name,
 			Namespace: pod.Namespace,
 			PodUID:    string(pod.UID),
@@ -296,95 +295,23 @@ func (h *GetIncidentReportHandler) lookupByPod(
 	// Build minimal incident without correlation
 	return &events.CorrelatedIncident{
 		ID:        fmt.Sprintf("report-%d", time.Now().UnixNano()),
-		Timestamp: failure.failureTs,
+		Timestamp: failure.FailureTs,
 		Trigger:   trigger,
 		AffectedPods: []events.AffectedPod{{
 			PodName:   pod.Name,
 			Namespace: pod.Namespace,
 			PodUID:    string(pod.UID),
-			Reason:    failure.reason,
+			Reason:    failure.Reason,
 		}},
 		Timeline: []events.TimelineEntry{{
-			Timestamp:    failure.failureTs,
+			Timestamp:    failure.FailureTs,
 			RelativeTime: "0s",
 			EventType:    "k8s",
-			Description:  fmt.Sprintf("[%s] %s", failure.reason, failure.message),
+			Description:  fmt.Sprintf("[%s] %s", failure.Reason, failure.Message),
 			Severity:     "critical",
 		}},
 		Causality: events.CausalityUnknown,
 	}, nil
-}
-
-// extractPodFailureForReport checks pod status for failure conditions.
-func (h *GetIncidentReportHandler) extractPodFailureForReport(pod *corev1.Pod) *reportPodFailure {
-	// Check phase first
-	if pod.Status.Phase == corev1.PodFailed {
-		return &reportPodFailure{
-			pod:       pod,
-			failureTs: getReportConditionTime(pod, corev1.PodReady),
-			reason:    pod.Status.Reason,
-			message:   pod.Status.Message,
-		}
-	}
-
-	// Check init container statuses for terminated with error
-	for _, cs := range pod.Status.InitContainerStatuses {
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			return &reportPodFailure{
-				pod:           pod,
-				failureTs:     cs.State.Terminated.FinishedAt.Time,
-				reason:        cs.State.Terminated.Reason,
-				message:       cs.State.Terminated.Message,
-				containerName: cs.Name,
-			}
-		}
-	}
-
-	// Check container statuses for terminated with error
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			return &reportPodFailure{
-				pod:           pod,
-				failureTs:     cs.State.Terminated.FinishedAt.Time,
-				reason:        cs.State.Terminated.Reason,
-				message:       cs.State.Terminated.Message,
-				containerName: cs.Name,
-			}
-		}
-	}
-
-	// Check for OOMKilled in last termination state
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.LastTerminationState.Terminated != nil {
-			term := cs.LastTerminationState.Terminated
-			if term.Reason == "OOMKilled" || term.ExitCode != 0 {
-				return &reportPodFailure{
-					pod:           pod,
-					failureTs:     term.FinishedAt.Time,
-					reason:        term.Reason,
-					message:       term.Message,
-					containerName: cs.Name,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// getReportConditionTime returns the transition time for a condition.
-// Falls back to pod creation time, or current time if neither is available.
-func getReportConditionTime(pod *corev1.Pod, condType corev1.PodConditionType) time.Time {
-	for _, c := range pod.Status.Conditions {
-		if c.Type == condType {
-			return c.LastTransitionTime.Time
-		}
-	}
-	// Fallback to pod creation time for reproducibility
-	if !pod.CreationTimestamp.IsZero() {
-		return pod.CreationTimestamp.Time
-	}
-	return time.Now()
 }
 
 // IncidentReportResponse is the full response from get_incident_report.
@@ -425,11 +352,10 @@ type IncidentGPUInfo struct {
 
 // IncidentRootCause contains detailed root cause analysis.
 type IncidentRootCause struct {
-	Category       string   `json:"category"`
-	Confidence     float64  `json:"confidence"`
-	NotYourCode    bool     `json:"not_your_code"`
-	Evidence       []string `json:"evidence"`
-	MatchedPattern string   `json:"matched_pattern,omitempty"`
+	Category    string   `json:"category"`
+	Confidence  float64  `json:"confidence"`
+	NotYourCode bool     `json:"not_your_code"`
+	Evidence    []string `json:"evidence"`
 }
 
 // IncidentTimelineEntry is a full timeline entry.
@@ -442,6 +368,37 @@ type IncidentTimelineEntry struct {
 	Details      map[string]interface{} `json:"details,omitempty"`
 }
 
+// calculateAnalysisDuration computes the time span covered by the incident timeline.
+// Returns the duration between first and last timeline events, or "30m" default
+// if the timeline has fewer than 2 entries.
+func calculateAnalysisDuration(incident *events.CorrelatedIncident) string {
+	if len(incident.Timeline) < 2 {
+		return "30m" // default analysis window
+	}
+
+	first := incident.Timeline[0].Timestamp
+	last := incident.Timeline[len(incident.Timeline)-1].Timestamp
+
+	if first.IsZero() || last.IsZero() {
+		return "30m"
+	}
+
+	duration := last.Sub(first)
+	if duration <= 0 {
+		return "30m"
+	}
+
+	// Round to appropriate unit for readability
+	switch {
+	case duration < time.Minute:
+		return duration.Round(time.Second).String()
+	case duration < time.Hour:
+		return duration.Round(time.Minute).String()
+	default:
+		return duration.Round(time.Minute).String()
+	}
+}
+
 // buildReportResponse constructs the comprehensive response.
 func (h *GetIncidentReportHandler) buildReportResponse(
 	incident *events.CorrelatedIncident,
@@ -452,7 +409,7 @@ func (h *GetIncidentReportHandler) buildReportResponse(
 	resp := IncidentReportResponse{
 		IncidentID:       incident.ID,
 		Timestamp:        incident.Timestamp.Format(time.RFC3339),
-		DurationAnalyzed: "30m", // Default analysis window
+		DurationAnalyzed: calculateAnalysisDuration(incident),
 		RootCause: IncidentRootCause{
 			Category:    report.RootCause.Category,
 			Confidence:  report.RootCause.Confidence,

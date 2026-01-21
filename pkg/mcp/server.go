@@ -159,15 +159,17 @@ func New(cfg Config) (*Server, error) {
 		mcpServer.AddTool(tools.GetDescribeGPUNodeTool(), describeHandler.Handle)
 
 		// explain_failure - flagship GPU failure analysis tool
+		// Gateway-only: requires K8s API access to query pod status.
 		// In gateway mode, correlator/recorder are nil, so handler
-		// falls back to minimal analysis based on K8s data only
+		// falls back to minimal analysis based on K8s data only.
 		explainHandler := tools.NewExplainFailureHandler(
 			cfg.K8sClient.Clientset(),
 		)
 		mcpServer.AddTool(tools.GetExplainFailureTool(), explainHandler.Handle)
 
 		// get_incident_report - detailed incident report tool
-		// Provides comprehensive incident data for deep debugging and post-mortems
+		// Gateway-only: requires K8s API access to query pod status.
+		// Provides comprehensive incident data for deep debugging and post-mortems.
 		reportHandler := tools.NewGetIncidentReportHandler(
 			cfg.K8sClient.Clientset(),
 		)

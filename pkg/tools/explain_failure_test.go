@@ -373,9 +373,7 @@ func TestExplainFailureHandler_parseArgs_RequiredPodName(t *testing.T) {
 	}
 }
 
-func TestExplainFailureHandler_extractPodFailure(t *testing.T) {
-	handler := NewExplainFailureHandler(nil)
-
+func TestExtractPodFailure_ExplainFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		pod           *corev1.Pod
@@ -506,7 +504,7 @@ func TestExplainFailureHandler_extractPodFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			failure := handler.extractPodFailure(tt.pod)
+			failure := ExtractPodFailure(tt.pod)
 
 			if tt.wantFailure && failure == nil {
 				t.Error("expected failure, got nil")
@@ -514,17 +512,17 @@ func TestExplainFailureHandler_extractPodFailure(t *testing.T) {
 			if !tt.wantFailure && failure != nil {
 				t.Errorf("expected no failure, got %+v", failure)
 			}
-			if failure != nil && failure.reason != tt.wantReason {
-				t.Errorf("expected reason %s, got %s", tt.wantReason, failure.reason)
+			if failure != nil && failure.Reason != tt.wantReason {
+				t.Errorf("expected reason %s, got %s", tt.wantReason, failure.Reason)
 			}
-			if failure != nil && failure.containerName != tt.wantContainer {
-				t.Errorf("expected container %q, got %q", tt.wantContainer, failure.containerName)
+			if failure != nil && failure.ContainerName != tt.wantContainer {
+				t.Errorf("expected container %q, got %q", tt.wantContainer, failure.ContainerName)
 			}
 		})
 	}
 }
 
-func TestGetConditionTime(t *testing.T) {
+func TestGetConditionTime_ExplainFailure(t *testing.T) {
 	now := time.Now()
 	creationTime := now.Add(-1 * time.Hour)
 	conditionTime := now.Add(-30 * time.Minute)
@@ -585,16 +583,16 @@ func TestGetConditionTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getConditionTime(tt.pod, tt.condType)
+			got := GetConditionTime(tt.pod, tt.condType)
 
 			if tt.approx {
 				// Check that returned time is within 1 second of now
 				if time.Since(got) > time.Second {
-					t.Errorf("getConditionTime() = %v, expected recent time", got)
+					t.Errorf("GetConditionTime() = %v, expected recent time", got)
 				}
 			} else {
 				if !got.Equal(tt.want) {
-					t.Errorf("getConditionTime() = %v, want %v", got, tt.want)
+					t.Errorf("GetConditionTime() = %v, want %v", got, tt.want)
 				}
 			}
 		})
@@ -604,17 +602,17 @@ func TestGetConditionTime(t *testing.T) {
 func TestExplainFailureHandler_buildMinimalIncident(t *testing.T) {
 	handler := NewExplainFailureHandler(nil)
 
-	failure := &podFailure{
-		pod: &corev1.Pod{
+	failure := &PodFailure{
+		Pod: &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pod",
 				Namespace: "test-ns",
 				UID:       "test-uid-123",
 			},
 		},
-		failureTs: time.Now(),
-		reason:    "OOMKilled",
-		message:   "Memory limit exceeded",
+		FailureTs: time.Now(),
+		Reason:    "OOMKilled",
+		Message:   "Memory limit exceeded",
 	}
 
 	trigger := handler.buildTriggerEvent(failure)
@@ -648,8 +646,8 @@ func TestExplainFailureHandler_buildMinimalIncident(t *testing.T) {
 func TestExplainFailureHandler_buildResponse(t *testing.T) {
 	handler := NewExplainFailureHandler(nil)
 
-	failure := &podFailure{
-		pod: &corev1.Pod{
+	failure := &PodFailure{
+		Pod: &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "ml-training-pod",
 				Namespace: "ml",
@@ -658,9 +656,9 @@ func TestExplainFailureHandler_buildResponse(t *testing.T) {
 				NodeName: "gpu-node-1",
 			},
 		},
-		failureTs: time.Now(),
-		reason:    "OOMKilled",
-		message:   "Container exceeded memory limit",
+		FailureTs: time.Now(),
+		Reason:    "OOMKilled",
+		Message:   "Container exceeded memory limit",
 	}
 
 	trigger := handler.buildTriggerEvent(failure)
