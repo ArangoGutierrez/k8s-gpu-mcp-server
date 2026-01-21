@@ -12,7 +12,6 @@ import (
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/events"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/incidents"
 	"github.com/mark3labs/mcp-go/mcp"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -77,20 +76,11 @@ func NewExplainFailureHandler(
 	return h
 }
 
-// podFailure contains information about a failed pod.
-type podFailure struct {
-	pod           *corev1.Pod
-	failureTs     time.Time
-	reason        string
-	message       string
-	containerName string // Name of the failed container (empty for pod-level failures)
-}
-
 // findPodFailure locates the pod and extracts failure information.
 func (h *ExplainFailureHandler) findPodFailure(
 	ctx context.Context,
 	podName, namespace string,
-) (*podFailure, error) {
+) (*PodFailure, error) {
 	pod, err := h.k8sClientset.CoreV1().Pods(namespace).Get(
 		ctx, podName, metav1.GetOptions{})
 	if err != nil {
@@ -98,86 +88,13 @@ func (h *ExplainFailureHandler) findPodFailure(
 	}
 
 	// Check if pod is in a failed state
-	failure := h.extractPodFailure(pod)
+	failure := ExtractPodFailure(pod)
 	if failure == nil {
 		return nil, fmt.Errorf("pod %s/%s is not in a failed state (phase: %s)",
 			namespace, podName, pod.Status.Phase)
 	}
 
 	return failure, nil
-}
-
-// extractPodFailure checks pod status for failure conditions.
-func (h *ExplainFailureHandler) extractPodFailure(pod *corev1.Pod) *podFailure {
-	// Check phase first
-	if pod.Status.Phase == corev1.PodFailed {
-		return &podFailure{
-			pod:       pod,
-			failureTs: getConditionTime(pod, corev1.PodReady),
-			reason:    pod.Status.Reason,
-			message:   pod.Status.Message,
-		}
-	}
-
-	// Check init container statuses for terminated with error
-	// Init container failures are common in GPU workloads (e.g., NVIDIA device plugin init)
-	for _, cs := range pod.Status.InitContainerStatuses {
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			return &podFailure{
-				pod:           pod,
-				failureTs:     cs.State.Terminated.FinishedAt.Time,
-				reason:        cs.State.Terminated.Reason,
-				message:       cs.State.Terminated.Message,
-				containerName: cs.Name,
-			}
-		}
-	}
-
-	// Check container statuses for terminated with error
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			return &podFailure{
-				pod:           pod,
-				failureTs:     cs.State.Terminated.FinishedAt.Time,
-				reason:        cs.State.Terminated.Reason,
-				message:       cs.State.Terminated.Message,
-				containerName: cs.Name,
-			}
-		}
-	}
-
-	// Check for OOMKilled in last termination state
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.LastTerminationState.Terminated != nil {
-			term := cs.LastTerminationState.Terminated
-			if term.Reason == "OOMKilled" || term.ExitCode != 0 {
-				return &podFailure{
-					pod:           pod,
-					failureTs:     term.FinishedAt.Time,
-					reason:        term.Reason,
-					message:       term.Message,
-					containerName: cs.Name,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// getConditionTime returns the transition time for a condition.
-// Falls back to pod creation time for reproducibility, or current time if neither is available.
-func getConditionTime(pod *corev1.Pod, condType corev1.PodConditionType) time.Time {
-	for _, c := range pod.Status.Conditions {
-		if c.Type == condType {
-			return c.LastTransitionTime.Time
-		}
-	}
-	// Fallback to pod creation time for reproducibility
-	if !pod.CreationTimestamp.IsZero() {
-		return pod.CreationTimestamp.Time
-	}
-	return time.Now()
 }
 
 // Handle processes the explain_failure tool request.
@@ -261,20 +178,20 @@ func (h *ExplainFailureHandler) parseArgs(
 }
 
 // buildTriggerEvent creates a trigger Event from pod failure.
-func (h *ExplainFailureHandler) buildTriggerEvent(failure *podFailure) events.Event {
+func (h *ExplainFailureHandler) buildTriggerEvent(failure *PodFailure) events.Event {
 	return events.Event{
 		Type:      "k8s",
-		Timestamp: failure.failureTs,
+		Timestamp: failure.FailureTs,
 		Source:    "explain_failure",
 		Data: events.K8sEvent{
-			Timestamp: failure.failureTs,
+			Timestamp: failure.FailureTs,
 			Type:      "Warning",
-			Reason:    failure.reason,
-			Message:   failure.message,
-			PodName:   failure.pod.Name,
-			Namespace: failure.pod.Namespace,
-			PodUID:    string(failure.pod.UID),
-			NodeName:  failure.pod.Spec.NodeName,
+			Reason:    failure.Reason,
+			Message:   failure.Message,
+			PodName:   failure.Pod.Name,
+			Namespace: failure.Pod.Namespace,
+			PodUID:    string(failure.Pod.UID),
+			NodeName:  failure.Pod.Spec.NodeName,
 		},
 	}
 }
@@ -282,23 +199,23 @@ func (h *ExplainFailureHandler) buildTriggerEvent(failure *podFailure) events.Ev
 // buildMinimalIncident creates an incident without full correlation.
 func (h *ExplainFailureHandler) buildMinimalIncident(
 	trigger events.Event,
-	failure *podFailure,
+	failure *PodFailure,
 ) *events.CorrelatedIncident {
 	return &events.CorrelatedIncident{
 		ID:        fmt.Sprintf("manual-%d", time.Now().UnixNano()),
-		Timestamp: failure.failureTs,
+		Timestamp: failure.FailureTs,
 		Trigger:   trigger,
 		AffectedPods: []events.AffectedPod{{
-			PodName:   failure.pod.Name,
-			Namespace: failure.pod.Namespace,
-			PodUID:    string(failure.pod.UID),
-			Reason:    failure.reason,
+			PodName:   failure.Pod.Name,
+			Namespace: failure.Pod.Namespace,
+			PodUID:    string(failure.Pod.UID),
+			Reason:    failure.Reason,
 		}},
 		Timeline: []events.TimelineEntry{{
-			Timestamp:    failure.failureTs,
+			Timestamp:    failure.FailureTs,
 			RelativeTime: "0s",
 			EventType:    "k8s",
-			Description:  fmt.Sprintf("[%s] %s", failure.reason, failure.message),
+			Description:  fmt.Sprintf("[%s] %s", failure.Reason, failure.Message),
 			Severity:     "critical",
 		}},
 		Causality: events.CausalityUnknown,
@@ -347,17 +264,17 @@ type TimelineEntry struct {
 
 // buildResponse constructs the final response.
 func (h *ExplainFailureHandler) buildResponse(
-	failure *podFailure,
+	failure *PodFailure,
 	incident *events.CorrelatedIncident,
 	report *incidents.IncidentReport,
 	explanation string,
 ) ExplainFailureResponse {
 	resp := ExplainFailureResponse{
 		Pod: PodSummary{
-			Name:      failure.pod.Name,
-			Namespace: failure.pod.Namespace,
-			Node:      failure.pod.Spec.NodeName,
-			Container: failure.containerName,
+			Name:      failure.Pod.Name,
+			Namespace: failure.Pod.Namespace,
+			Node:      failure.Pod.Spec.NodeName,
+			Container: failure.ContainerName,
 		},
 		RootCause: RootCauseSummary{
 			Category:    report.RootCause.Category,
