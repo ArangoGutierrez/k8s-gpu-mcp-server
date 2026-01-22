@@ -79,6 +79,47 @@ Install NVIDIA DRA Driver:
   $ helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
   $ helm install nvidia-dra-driver nvidia/nvidia-dra-driver -n nvidia-system
 {{- end }}
+{{- if and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external") }}
+
+DCGM External Mode Configuration:
+
+The agent is configured to connect to an external DCGM daemon via socket.
+Socket path: {{ .Values.agent.dcgm.socket }}
+
+Init Container Behavior:
+  An init container (wait-for-dcgm-socket) waits for the socket to appear
+  before starting the agent. This allows pods to schedule even if
+  nv-hostengine hasn't started yet.
+
+  Timeout: {{ default "60" .Values.agent.dcgm.socketWaitTimeout }}s (configurable via agent.dcgm.socketWaitTimeout)
+
+Verify DCGM is running on each GPU node:
+  $ kubectl get nodes -l nvidia.com/gpu.present=true -o name | while read node; do
+      echo "=== ${node#node/} ==="
+      kubectl debug node/${node#node/} -it --image=busybox -- \
+        ls -la {{ .Values.agent.dcgm.socket }} 2>/dev/null || echo "Socket NOT found"
+    done
+
+If DCGM is not running, start it on each GPU node:
+  - With GPU Operator: Enable DCGM in the ClusterPolicy
+  - Manual: Run "nv-hostengine -n" on each node
+
+Troubleshooting:
+
+If init container times out (CrashLoopBackOff):
+  $ kubectl logs -n {{ include "k8s-gpu-mcp-server.namespace" . }} <pod> -c wait-for-dcgm-socket
+
+  Common causes:
+  - nv-hostengine not running on the node
+  - Socket path mismatch (check dcgm.socket value)
+  - Increase timeout: --set agent.dcgm.socketWaitTimeout=120
+
+To skip socket wait entirely (fail fast):
+  $ helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --set agent.dcgm.socketWaitTimeout=0
+
+To switch to embedded mode (no external dependency):
+  $ helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --set agent.dcgm.mode=embedded
+{{- end }}
 
 -------------------------------------------------------------------------------
 RBAC PERMISSIONS

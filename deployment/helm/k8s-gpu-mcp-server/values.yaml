@@ -16,6 +16,61 @@ agent:
   # When "mock", GPU access method validation is skipped
   nvmlMode: "real"
 
+  # DCGM integration (optional advanced telemetry)
+  # DCGM (Data Center GPU Manager) provides enhanced capabilities beyond NVML:
+  #   - Native XID error field (no log parsing needed)
+  #   - GPU profiling metrics (SM occupancy, tensor core utilization)
+  #   - NVSwitch fabric monitoring (multi-node GPU communication)
+  #   - Health policies with configurable thresholds
+  # Note: Requires datacenter-class GPUs (Tesla, A100, H100, etc.)
+  dcgm:
+    # -- Enable DCGM integration for advanced telemetry
+    # When enabled, agent gains enhanced monitoring capabilities
+    # Gracefully degrades to NVML-only if DCGM unavailable
+    enabled: false
+
+    # -- DCGM mode: embedded or external
+    # embedded: Agent starts nv-hostengine internally (self-contained, ~50-80MB extra memory)
+    # external: Agent connects to existing DCGM daemon via socket
+    mode: "embedded"
+
+    # -- DCGM socket path for external mode
+    # Only used when mode: external
+    #
+    # External mode behavior:
+    #   - An init container waits for the socket to exist before starting the agent
+    #   - This prevents scheduling failures when nv-hostengine starts after the pod
+    #   - The wait timeout is configurable via socketWaitTimeout
+    #
+    # To verify DCGM is running on a node:
+    #   $ ssh <node> "ls -la /var/run/dcgm.sock"
+    #   $ ssh <node> "dcgmi discovery -l"
+    #
+    # To start DCGM daemon on a node (if not using GPU Operator):
+    #   $ ssh <node> "sudo nv-hostengine -n"  # -n for non-persistent mode
+    socket: "/var/run/dcgm.sock"
+
+    # -- Timeout (seconds) for init container to wait for DCGM socket
+    # Only used when mode: external
+    # The init container polls every 2s until the socket appears or timeout is reached
+    # Set to "0" to disable waiting (pod will fail immediately if socket missing)
+    socketWaitTimeout: "60"
+
+    # -- Embedded nv-hostengine port
+    # Only used when mode: embedded
+    # Each agent runs its own nv-hostengine on this port
+    embeddedPort: 5555
+
+    # -- Field sampling interval
+    # Minimum: 100ms, recommended: 1s for general monitoring
+    # Lower intervals increase CPU usage
+    watchInterval: "1s"
+
+    # -- Enable profiling metrics collection
+    # Collects SM occupancy, tensor activity, DRAM activity, etc.
+    # Requires datacenter GPUs with profiling support
+    enableProfiling: false
+
   # RBAC configuration for agent DaemonSet
   rbac:
     # -- Create RBAC resources for agent
