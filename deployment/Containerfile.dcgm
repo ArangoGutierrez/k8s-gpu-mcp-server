@@ -1,0 +1,110 @@
+# Copyright 2026 k8s-gpu-mcp-server contributors
+# SPDX-License-Identifier: Apache-2.0
+
+# Multi-stage Dockerfile for k8s-gpu-mcp-server with DCGM support
+# Produces a container with embedded nv-hostengine capability for
+# advanced GPU telemetry (profiling metrics, NVSwitch, native XID).
+
+# =============================================================================
+# Stage 1: DCGM base for nv-hostengine binaries and libraries
+# =============================================================================
+FROM nvcr.io/nvidia/dcgm:3.3.8-1-ubuntu22.04 AS dcgm
+
+# =============================================================================
+# Stage 2: Builder
+# =============================================================================
+FROM golang:1.25-bookworm AS builder
+
+# Install build dependencies for CGO (NVML bindings)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Build arguments for version injection
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+
+# Download dependencies first (better layer caching)
+# Using BuildKit cache mounts for persistent module cache across builds
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code
+COPY . .
+
+# Build the agent binary with CGO enabled for NVML
+# Note: DCGM bindings would require additional CGO setup if using native bindings
+# For now, we use the nv-hostengine binary approach which doesn't require CGO DCGM
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-s -w \
+        -X github.com/ArangoGutierrez/k8s-gpu-mcp-server/internal/info.version=${VERSION} \
+        -X github.com/ArangoGutierrez/k8s-gpu-mcp-server/internal/info.gitCommit=${GIT_COMMIT}" \
+    -o /agent \
+    ./cmd/agent
+
+# Verify the binary works (basic sanity check)
+RUN /agent --version
+
+# =============================================================================
+# Stage 3: Runtime with DCGM (Distroless + Busybox + DCGM)
+# =============================================================================
+FROM busybox:1.37-musl AS busybox
+
+FROM gcr.io/distroless/base-debian12:nonroot
+
+# OCI Image Labels
+LABEL org.opencontainers.image.title="k8s-gpu-mcp-server-dcgm"
+LABEL org.opencontainers.image.description="Ephemeral GPU diagnostic agent with DCGM support for advanced telemetry"
+LABEL org.opencontainers.image.source="https://github.com/ArangoGutierrez/k8s-gpu-mcp-server"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="ArangoGutierrez"
+
+# Copy the agent binary from builder
+COPY --from=builder /agent /agent
+
+# Copy busybox for sleep capability (DaemonSet idle pattern)
+# Adds ~1.2MB but enables `sleep infinity` for K8s deployments
+COPY --from=busybox /bin/busybox /bin/busybox
+COPY --from=busybox /bin/sh /bin/sh
+COPY --from=busybox /bin/sleep /bin/sleep
+
+# Copy DCGM binaries and libraries from DCGM stage
+# nv-hostengine is the DCGM daemon that provides the API
+COPY --from=dcgm /usr/bin/nv-hostengine /usr/bin/nv-hostengine
+COPY --from=dcgm /usr/bin/dcgmi /usr/bin/dcgmi
+
+# Copy DCGM shared libraries
+# These are required for nv-hostengine and dcgmi to function
+COPY --from=dcgm /usr/lib/x86_64-linux-gnu/libdcgm*.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=dcgm /usr/lib/x86_64-linux-gnu/libnvidia-ml.so* /usr/lib/x86_64-linux-gnu/
+
+# Note: Additional NVML (libnvidia-ml.so) is provided at runtime by nvidia-container-toolkit
+# The version from DCGM is a fallback for environments without nvidia-container-toolkit
+
+# Note: USER is not set - let K8s securityContext control it
+# NVML/DCGM may require root (runAsUser: 0) in DaemonSet deployments
+
+# Expose no ports - stdio transport only by default
+# HTTP transport (port 8080) is handled by K8s service configuration
+
+# Default entrypoint and arguments
+# DCGM mode can be enabled via --dcgm-enabled=true
+ENTRYPOINT ["/agent"]
+CMD ["--nvml-mode=real", "--mode=read-only"]
+
+# Notes on image size:
+# - Base distroless: ~20MB
+# - Agent binary: ~15MB
+# - DCGM additions: ~130MB (nv-hostengine, dcgmi, libraries)
+# - Total: ~165MB (vs ~35MB for non-DCGM image)
+#
+# Notes on memory:
+# - Agent baseline: ~15-20MB
+# - nv-hostengine: ~50-80MB additional when running
+# - Total with DCGM: ~70-100MB

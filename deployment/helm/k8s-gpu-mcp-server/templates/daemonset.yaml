@@ -73,6 +73,43 @@ spec:
         resourceClaimName: {{ include "k8s-gpu-mcp-server.fullname" . }}-gpu
         {{- end }}
       {{- end }}
+      {{- /* Init container to wait for DCGM socket in external mode */}}
+      {{- if and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external") }}
+      initContainers:
+      - name: wait-for-dcgm-socket
+        image: busybox:1.37-musl
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          SOCKET="{{ .Values.agent.dcgm.socket }}"
+          TIMEOUT="{{ default "60" .Values.agent.dcgm.socketWaitTimeout }}"
+          echo "Waiting for DCGM socket at ${SOCKET} (timeout: ${TIMEOUT}s)..."
+          ELAPSED=0
+          while [ ! -S "${SOCKET}" ]; do
+            if [ ${ELAPSED} -ge ${TIMEOUT} ]; then
+              echo "ERROR: Timeout waiting for DCGM socket at ${SOCKET}"
+              echo "Ensure nv-hostengine is running on this node or switch to embedded mode"
+              exit 1
+            fi
+            sleep 2
+            ELAPSED=$((ELAPSED + 2))
+            echo "Waiting for socket... (${ELAPSED}s/${TIMEOUT}s)"
+          done
+          echo "DCGM socket found at ${SOCKET}"
+        volumeMounts:
+        - name: dcgm-socket-dir
+          mountPath: {{ dir .Values.agent.dcgm.socket }}
+          readOnly: true
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      {{- end }}
       containers:
       - name: agent
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -85,6 +122,21 @@ spec:
         - "--port={{ .Values.transport.http.port }}"
         - "--addr={{ .Values.transport.http.addr }}"
         - "--mode={{ default "read-only" .Values.agent.mode }}"
+        {{- if .Values.agent.dcgm.enabled }}
+        - "--dcgm-enabled=true"
+        - "--dcgm-mode={{ .Values.agent.dcgm.mode }}"
+        {{- if eq .Values.agent.dcgm.mode "external" }}
+        - "--dcgm-socket={{ .Values.agent.dcgm.socket }}"
+        {{- else }}
+        - "--dcgm-port={{ .Values.agent.dcgm.embeddedPort }}"
+        {{- end }}
+        {{- if .Values.agent.dcgm.watchInterval }}
+        - "--dcgm-interval={{ .Values.agent.dcgm.watchInterval }}"
+        {{- end }}
+        {{- if .Values.agent.dcgm.enableProfiling }}
+        - "--dcgm-profiling=true"
+        {{- end }}
+        {{- end }}
         ports:
         - name: http
           containerPort: {{ .Values.transport.http.port }}
@@ -155,7 +207,7 @@ spec:
           {{- /* RuntimeClass: No GPU resource request - monitors all GPUs */}}
           {{- toYaml .Values.resources | nindent 10 }}
           {{- end }}
-        {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled }}
+        {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled (and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external")) }}
         volumeMounts:
         {{- if .Values.xidAnalysis.enabled }}
         - name: kmsg
@@ -167,8 +219,14 @@ spec:
           mountPath: /host/proc
           readOnly: true
         {{- end }}
+        {{- if and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external") }}
+        {{- /* Mount parent directory; socket is accessed via full path inside */}}
+        - name: dcgm-socket-dir
+          mountPath: {{ dir .Values.agent.dcgm.socket }}
+          readOnly: true
         {{- end }}
-      {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled }}
+        {{- end }}
+      {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled (and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external")) }}
       volumes:
       {{- if .Values.xidAnalysis.enabled }}
       - name: kmsg
@@ -180,6 +238,15 @@ spec:
       - name: host-proc
         hostPath:
           path: /proc
+          type: Directory
+      {{- end }}
+      {{- if and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external") }}
+      {{- /* Mount socket's parent directory to allow init container to wait for socket.
+             Using Directory type instead of Socket prevents scheduling failures when
+             the socket doesn't exist yet (nv-hostengine not running). */}}
+      - name: dcgm-socket-dir
+        hostPath:
+          path: {{ dir .Values.agent.dcgm.socket }}
           type: Directory
       {{- end }}
       {{- end }}
