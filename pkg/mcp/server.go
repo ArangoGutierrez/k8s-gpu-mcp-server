@@ -11,11 +11,13 @@ import (
 	"os"
 	"sync"
 
+	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/blackbox"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/gateway"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/k8s"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/nvml"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/prompts"
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/tools"
+	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/xid"
 	"github.com/mark3labs/mcp-go/server"
 	"k8s.io/klog/v2"
 )
@@ -68,6 +70,10 @@ type Config struct {
 	Oneshot int
 	// RoutingMode specifies gateway routing: "http" (default) or "exec"
 	RoutingMode string
+	// Recorder is the flight recorder for GPU telemetry (optional)
+	Recorder *blackbox.Recorder
+	// XIDWatcher is the XID event watcher (optional)
+	XIDWatcher *xid.Watcher
 }
 
 // New creates a new MCP server instance.
@@ -175,6 +181,12 @@ func New(cfg Config) (*Server, error) {
 		)
 		mcpServer.AddTool(tools.GetIncidentReportTool(), reportHandler.Handle)
 
+		// get_gpu_timeline - historical GPU metrics from flight recorder
+		// In gateway mode, proxy requests to node agents where recorder runs.
+		timelineProxy := gateway.NewProxyHandler(cfg.K8sClient,
+			"get_gpu_timeline", routerOpts...)
+		mcpServer.AddTool(tools.GetGPUTimelineTool(), timelineProxy.Handle)
+
 		// Register prompts
 		registerPrompts(mcpServer)
 
@@ -186,7 +198,7 @@ func New(cfg Config) (*Server, error) {
 			"tools", []string{"get_gpu_inventory", "get_gpu_health",
 				"analyze_xid_errors", "get_nvlink_topology",
 				"get_pod_gpu_allocation", "describe_gpu_node",
-				"explain_failure", "get_incident_report"},
+				"explain_failure", "get_incident_report", "get_gpu_timeline"},
 			"prompts", prompts.GetAllPromptNames(),
 			"version", cfg.Version,
 			"commit", cfg.GitCommit)
@@ -205,14 +217,31 @@ func New(cfg Config) (*Server, error) {
 		nvlinkHandler := tools.NewNVLinkTopologyHandler(cfg.NVMLClient)
 		mcpServer.AddTool(tools.GetNVLinkTopologyTool(), nvlinkHandler.Handle)
 
+		// get_gpu_timeline - historical GPU metrics from flight recorder
+		// Only register if recorder is available (started at main level).
+		toolsList := []string{"get_gpu_inventory", "get_gpu_health",
+			"analyze_xid_errors", "get_nvlink_topology"}
+		if cfg.Recorder != nil {
+			var timelineOpts []tools.GPUTimelineOption
+			timelineOpts = append(timelineOpts,
+				tools.WithTimelineRecorder(cfg.Recorder))
+			if cfg.XIDWatcher != nil {
+				timelineOpts = append(timelineOpts,
+					tools.WithTimelineXIDWatcher(cfg.XIDWatcher))
+			}
+			timelineHandler := tools.NewGPUTimelineHandler(
+				cfg.NVMLClient, timelineOpts...)
+			mcpServer.AddTool(tools.GetGPUTimelineTool(), timelineHandler.Handle)
+			toolsList = append(toolsList, "get_gpu_timeline")
+		}
+
 		// Register prompts
 		registerPrompts(mcpServer)
 
 		klog.InfoS("MCP server initialized",
 			"mode", cfg.Mode,
 			"gateway", false,
-			"tools", []string{"get_gpu_inventory", "get_gpu_health",
-				"analyze_xid_errors", "get_nvlink_topology"},
+			"tools", toolsList,
 			"prompts", prompts.GetAllPromptNames(),
 			"version", cfg.Version,
 			"commit", cfg.GitCommit)
