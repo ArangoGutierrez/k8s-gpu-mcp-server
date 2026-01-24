@@ -62,6 +62,13 @@ func (UnimplementedInterface) GetCudaDriverVersion(
 	return "", ErrNotImplemented
 }
 
+// GetCapabilities returns ErrNotImplemented.
+func (UnimplementedInterface) GetCapabilities(
+	_ context.Context,
+) (*Capabilities, error) {
+	return nil, ErrNotImplemented
+}
+
 // UnimplementedDevice provides default implementations that return
 // ErrNotImplemented for all Device methods. Embed this in your
 // implementation for forward compatibility when new methods are added.

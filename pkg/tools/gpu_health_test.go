@@ -620,6 +620,152 @@ func TestGetGPUHealthTool(t *testing.T) {
 	assert.Contains(t, tool.Description, "score")
 }
 
+func TestGPUHealthHandler_Handle_DegradedMode(t *testing.T) {
+	// Create mock with Tier1Basic capabilities (simulating old driver)
+	mockClient := nvml.NewMock(1)
+	mockClient.SetCapabilities(&nvml.Capabilities{
+		Tier:            nvml.Tier1Basic,
+		DriverVersion:   "450.80.02",
+		SupportedAPIs:   nvml.Tier1APIs,
+		UnsupportedAPIs: append(nvml.Tier2APIs, nvml.Tier3APIs...),
+	})
+
+	handler := NewGPUHealthHandler(mockClient)
+	ctx := context.Background()
+
+	request := mcp.CallToolRequest{}
+	result, err := handler.Handle(ctx, request)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+
+	textContent, ok := mcp.AsTextContent(result.Content[0])
+	require.True(t, ok)
+
+	var response GPUHealthResponse
+	err = json.Unmarshal([]byte(textContent.Text), &response)
+	require.NoError(t, err)
+
+	// Verify degraded mode fields
+	assert.True(t, response.Degraded)
+	assert.Equal(t, 1, response.CapabilityTier)
+	assert.Contains(t, response.DegradedReason, "450.80.02")
+	assert.Contains(t, response.DegradedReason, "basic")
+}
+
+func TestGPUHealthHandler_Handle_FullCapabilities(t *testing.T) {
+	// Create mock with full Tier3Advanced capabilities
+	mockClient := nvml.NewMock(1)
+
+	handler := NewGPUHealthHandler(mockClient)
+	ctx := context.Background()
+
+	request := mcp.CallToolRequest{}
+	result, err := handler.Handle(ctx, request)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	textContent, ok := mcp.AsTextContent(result.Content[0])
+	require.True(t, ok)
+
+	var response GPUHealthResponse
+	err = json.Unmarshal([]byte(textContent.Text), &response)
+	require.NoError(t, err)
+
+	// Verify not degraded with full capabilities
+	assert.False(t, response.Degraded)
+	assert.Equal(t, 3, response.CapabilityTier)
+	assert.Empty(t, response.DegradedReason)
+}
+
+func TestGPUHealthHandler_Handle_Tier2Health(t *testing.T) {
+	// Create mock with Tier2Health capabilities
+	mockClient := nvml.NewMock(1)
+	mockClient.SetCapabilities(&nvml.Capabilities{
+		Tier:            nvml.Tier2Health,
+		DriverVersion:   "535.129.03",
+		CudaVersion:     "12.2",
+		SupportedAPIs:   append(nvml.Tier1APIs, nvml.Tier2APIs...),
+		UnsupportedAPIs: nvml.Tier3APIs,
+	})
+
+	handler := NewGPUHealthHandler(mockClient)
+	ctx := context.Background()
+
+	request := mcp.CallToolRequest{}
+	result, err := handler.Handle(ctx, request)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	textContent, ok := mcp.AsTextContent(result.Content[0])
+	require.True(t, ok)
+
+	var response GPUHealthResponse
+	err = json.Unmarshal([]byte(textContent.Text), &response)
+	require.NoError(t, err)
+
+	// Tier2Health is still degraded (not full capabilities)
+	assert.True(t, response.Degraded)
+	assert.Equal(t, 2, response.CapabilityTier)
+	assert.Contains(t, response.DegradedReason, "535.129.03")
+	assert.Contains(t, response.DegradedReason, "NVLink")
+}
+
+func TestGPUHealthResponse_JSONSerialization_WithDegradedFields(t *testing.T) {
+	response := GPUHealthResponse{
+		Status:         "healthy",
+		OverallScore:   95,
+		DeviceCount:    1,
+		HealthyCount:   1,
+		Recommendation: "All GPUs healthy",
+		CapabilityTier: 1,
+		Degraded:       true,
+		DegradedReason: "driver 450.80.02 supports basic metrics only",
+		GPUs:           []GPUHealthStatus{},
+	}
+
+	jsonBytes, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	// Verify degraded fields are serialized
+	jsonStr := string(jsonBytes)
+	assert.Contains(t, jsonStr, "capability_tier")
+	assert.Contains(t, jsonStr, "degraded")
+	assert.Contains(t, jsonStr, "degraded_reason")
+	assert.Contains(t, jsonStr, "450.80.02")
+
+	// Verify deserialization
+	var decoded GPUHealthResponse
+	err = json.Unmarshal(jsonBytes, &decoded)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, decoded.CapabilityTier)
+	assert.True(t, decoded.Degraded)
+	assert.Equal(t, response.DegradedReason, decoded.DegradedReason)
+}
+
+func TestGPUHealthResponse_DegradedReasonOmittedWhenEmpty(t *testing.T) {
+	response := GPUHealthResponse{
+		Status:         "healthy",
+		DeviceCount:    1,
+		CapabilityTier: 3,
+		Degraded:       false,
+		DegradedReason: "", // Empty - should be omitted
+	}
+
+	jsonBytes, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	// degraded_reason should be omitted when empty
+	assert.NotContains(t, string(jsonBytes), "degraded_reason")
+	// But capability_tier and degraded should still be present
+	assert.Contains(t, string(jsonBytes), "capability_tier")
+	assert.Contains(t, string(jsonBytes), "degraded")
+}
+
 func TestGPUHealthResponse_JSONSerialization(t *testing.T) {
 	response := GPUHealthResponse{
 		Status:         "healthy",
@@ -934,4 +1080,20 @@ func (m *mockEmptyNVML) GetDriverVersion(ctx context.Context) (string, error) {
 }
 func (m *mockEmptyNVML) GetCudaDriverVersion(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no devices")
+}
+func (m *mockEmptyNVML) GetCapabilities(ctx context.Context) (*nvml.Capabilities, error) {
+	return nil, nil
+}
+
+// Add GetCapabilities to mockHealthyNVML
+func (m *mockHealthyNVML) GetCapabilities(ctx context.Context) (*nvml.Capabilities, error) {
+	return &nvml.Capabilities{
+		Tier:          nvml.Tier3Advanced,
+		DriverVersion: "575.57.08",
+		CudaVersion:   "12.9",
+		SupportedAPIs: append(
+			append(nvml.Tier1APIs, nvml.Tier2APIs...),
+			nvml.Tier3APIs...,
+		),
+	}, nil
 }

@@ -14,6 +14,7 @@ type Mock struct {
 	UnimplementedInterface // Embedded for forward compatibility
 	deviceCount            int
 	devices                []*MockDevice
+	capabilities           *Capabilities
 }
 
 // Compile-time interface satisfaction checks.
@@ -29,9 +30,21 @@ func NewMock(deviceCount int) *Mock {
 		deviceCount = 2 // Default to 2 fake GPUs
 	}
 
+	// Build default full capabilities (Tier3Advanced)
+	allAPIs := make([]string, 0, len(Tier1APIs)+len(Tier2APIs)+len(Tier3APIs))
+	allAPIs = append(allAPIs, Tier1APIs...)
+	allAPIs = append(allAPIs, Tier2APIs...)
+	allAPIs = append(allAPIs, Tier3APIs...)
+
 	m := &Mock{
 		deviceCount: deviceCount,
 		devices:     make([]*MockDevice, deviceCount),
+		capabilities: &Capabilities{
+			Tier:          Tier3Advanced,
+			DriverVersion: "575.57.08",
+			CudaVersion:   "12.9",
+			SupportedAPIs: allAPIs,
+		},
 	}
 
 	// Create fake devices
@@ -99,6 +112,16 @@ func (m *Mock) GetDriverVersion(ctx context.Context) (string, error) {
 // GetCudaDriverVersion returns the mock CUDA driver version.
 func (m *Mock) GetCudaDriverVersion(ctx context.Context) (string, error) {
 	return "12.9", nil
+}
+
+// GetCapabilities returns the configured capabilities for the mock.
+func (m *Mock) GetCapabilities(ctx context.Context) (*Capabilities, error) {
+	return m.capabilities, nil
+}
+
+// SetCapabilities allows tests to configure capability reporting.
+func (m *Mock) SetCapabilities(caps *Capabilities) {
+	m.capabilities = caps
 }
 
 // GetMockDevice returns the MockDevice at the specified index for test

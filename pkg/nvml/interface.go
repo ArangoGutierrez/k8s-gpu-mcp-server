@@ -34,6 +34,11 @@ type Interface interface {
 	// GetCudaDriverVersion returns the CUDA driver version as a string
 	// (e.g., "12.9"). The raw version is major*1000 + minor*10.
 	GetCudaDriverVersion(ctx context.Context) (string, error)
+
+	// GetCapabilities returns the detected NVML capability tier and
+	// supported/unsupported APIs. Call after Init() to get accurate results.
+	// Returns nil with ErrNotInitialized if Init() has not been called.
+	GetCapabilities(ctx context.Context) (*Capabilities, error)
 }
 
 // Device represents a single GPU device.
