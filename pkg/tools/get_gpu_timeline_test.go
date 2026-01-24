@@ -16,6 +16,8 @@ import (
 )
 
 // setupMockRecorder creates a recorder with mock NVML and test data.
+// TODO: The snapshots parameter is reserved for future test data injection
+// when the Recorder API supports it.
 func setupMockRecorder(t *testing.T, _ []blackbox.GPUSnapshot) (*blackbox.Recorder, nvml.Interface) {
 	t.Helper()
 
@@ -661,7 +663,7 @@ func TestGPUTimelineHandler_BuildResponse(t *testing.T) {
 		includeStats: true,
 	}
 
-	resp := handler.buildResponse("GPU-TEST-UUID", snapshots, args)
+	resp := handler.buildResponse(context.Background(), "GPU-TEST-UUID", snapshots, args)
 
 	if resp.GPUUUID != "GPU-TEST-UUID" {
 		t.Errorf("expected UUID 'GPU-TEST-UUID', got %s", resp.GPUUUID)
@@ -707,7 +709,7 @@ func TestGPUTimelineHandler_BuildResponse_NoStats(t *testing.T) {
 		includeStats: false, // Explicitly disable stats
 	}
 
-	resp := handler.buildResponse("GPU-TEST-UUID", snapshots, args)
+	resp := handler.buildResponse(context.Background(), "GPU-TEST-UUID", snapshots, args)
 
 	if resp.Statistics != nil {
 		t.Error("expected nil statistics when includeStats=false")

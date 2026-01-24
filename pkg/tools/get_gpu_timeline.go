@@ -134,6 +134,13 @@ func (h *GPUTimelineHandler) Handle(
 ) (*mcp.CallToolResult, error) {
 	klog.InfoS("get_gpu_timeline invoked")
 
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		klog.InfoS("context cancelled before timeline query")
+		return mcp.NewToolResultError(
+			fmt.Sprintf("operation cancelled: %s", err)), nil
+	}
+
 	// 1. Validate recorder is available
 	if h.recorder == nil || !h.recorder.IsRunning() {
 		return mcp.NewToolResultError(
@@ -305,7 +312,7 @@ func (h *GPUTimelineHandler) handleSingleGPU(
 			fmt.Sprintf("failed to get timeline: %v", err)), nil
 	}
 
-	response := h.buildResponse(gpuUUID, snapshots, args)
+	response := h.buildResponse(ctx, gpuUUID, snapshots, args)
 
 	// Add events if XID watcher is available
 	since := time.Now().Add(-args.duration)
@@ -334,7 +341,13 @@ func (h *GPUTimelineHandler) handleAllGPUs(
 	since := time.Now().Add(-args.duration)
 
 	for uuid, snapshots := range allTimelines {
-		resp := h.buildResponse(uuid, snapshots, args)
+		// Check for context cancellation
+		if err := ctx.Err(); err != nil {
+			return mcp.NewToolResultError(
+				fmt.Sprintf("operation cancelled: %s", err)), nil
+		}
+
+		resp := h.buildResponse(ctx, uuid, snapshots, args)
 		resp.Events = h.extractEvents(snapshots, uuid, since)
 		multiResp.Timelines = append(multiResp.Timelines, resp)
 	}
@@ -349,6 +362,7 @@ func (h *GPUTimelineHandler) handleAllGPUs(
 
 // buildResponse constructs a GPUTimelineResponse from snapshots.
 func (h *GPUTimelineHandler) buildResponse(
+	ctx context.Context,
 	gpuUUID string,
 	snapshots []blackbox.GPUSnapshot,
 	args *timelineArgs,
@@ -373,10 +387,10 @@ func (h *GPUTimelineHandler) buildResponse(
 
 	// Try to get GPU name via NVML
 	if h.nvmlClient != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		nvmlCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if dev, err := h.nvmlClient.GetDeviceByIndex(ctx, resp.GPUIndex); err == nil {
-			if name, err := dev.GetName(ctx); err == nil {
+		if dev, err := h.nvmlClient.GetDeviceByIndex(nvmlCtx, resp.GPUIndex); err == nil {
+			if name, err := dev.GetName(nvmlCtx); err == nil {
 				resp.GPUName = name
 			}
 		}
