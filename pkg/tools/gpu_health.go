@@ -36,6 +36,15 @@ type GPUHealthResponse struct {
 	CriticalCount  int               `json:"critical_count"`
 	GPUs           []GPUHealthStatus `json:"gpus"`
 	Recommendation string            `json:"recommendation"`
+	// CapabilityTier indicates the NVML capability level (1=basic, 2=health,
+	// 3=advanced). A value of 0 means capability detection failed.
+	CapabilityTier int `json:"capability_tier"`
+	// Degraded indicates if running with reduced NVML functionality due to
+	// older driver or unsupported hardware features.
+	Degraded bool `json:"degraded"`
+	// DegradedReason explains why functionality is reduced. Empty when not
+	// degraded.
+	DegradedReason string `json:"degraded_reason,omitempty"`
 }
 
 // GPUHealthStatus contains health metrics for a single GPU.
@@ -136,6 +145,12 @@ func (h *GPUHealthHandler) Handle(
 			fmt.Sprintf("failed to get device count: %s", err)), nil
 	}
 
+	// Get capabilities for degraded mode reporting
+	var caps *nvml.Capabilities
+	if c, err := h.nvmlClient.GetCapabilities(ctx); err == nil && c != nil {
+		caps = c
+	}
+
 	// Collect health for each GPU
 	gpus := make([]GPUHealthStatus, 0, count)
 	for i := 0; i < count; i++ {
@@ -163,11 +178,20 @@ func (h *GPUHealthHandler) Handle(
 	// Calculate overall status
 	response := h.calculateOverallHealth(gpus)
 
+	// Populate capability fields
+	if caps != nil {
+		response.CapabilityTier = int(caps.Tier)
+		response.Degraded = caps.IsDegraded()
+		response.DegradedReason = caps.DegradedReason()
+	}
+
 	// Generate recommendations
 	response.Recommendation = h.generateRecommendation(response)
 
 	klog.InfoS("get_gpu_health completed",
-		"count", response.DeviceCount, "status", response.Status)
+		"count", response.DeviceCount, "status", response.Status,
+		"capability_tier", response.CapabilityTier,
+		"degraded", response.Degraded)
 
 	return h.marshalResponse(response)
 }

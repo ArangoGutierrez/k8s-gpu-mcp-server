@@ -59,6 +59,9 @@ func (m *mockZeroGPUs) GetDriverVersion(ctx context.Context) (string, error) {
 func (m *mockZeroGPUs) GetCudaDriverVersion(ctx context.Context) (string, error) {
 	return "", nil
 }
+func (m *mockZeroGPUs) GetCapabilities(ctx context.Context) (*nvml.Capabilities, error) {
+	return nil, nil
+}
 
 func TestNVLinkTopology_SingleGPU(t *testing.T) {
 	mock := nvml.NewMock(1)

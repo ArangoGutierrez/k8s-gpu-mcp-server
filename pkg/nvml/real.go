@@ -21,6 +21,7 @@ type Real struct {
 	UnimplementedInterface // Embedded for forward compatibility
 	mu                     sync.Mutex
 	initialized            bool
+	capabilities           *Capabilities
 }
 
 // Compile-time interface satisfaction checks.
@@ -58,6 +59,9 @@ func (r *Real) Init(ctx context.Context) error {
 	}
 
 	r.initialized = true
+
+	// Probe capabilities after successful init
+	r.capabilities = r.probeCapabilities(ctx)
 	return nil
 }
 
@@ -163,6 +167,117 @@ func (r *Real) GetCudaDriverVersion(ctx context.Context) (string, error) {
 	major := version / 1000
 	minor := (version % 1000) / 10
 	return fmt.Sprintf("%d.%d", major, minor), nil
+}
+
+// GetCapabilities returns the detected NVML capability tier.
+func (r *Real) GetCapabilities(ctx context.Context) (*Capabilities, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrContextCancelled, err)
+	}
+
+	if !r.initialized {
+		return nil, ErrNotInitialized
+	}
+	return r.capabilities, nil
+}
+
+// probeCapabilities detects available NVML capabilities by testing APIs.
+func (r *Real) probeCapabilities(ctx context.Context) *Capabilities {
+	supported := make(map[string]bool)
+
+	// Get driver version
+	var driverVersion, cudaVersion string
+	if ver, ret := nvml.SystemGetDriverVersion(); ret == nvml.SUCCESS {
+		driverVersion = ver
+	}
+	// Get CUDA version
+	if ver, ret := nvml.SystemGetCudaDriverVersion(); ret == nvml.SUCCESS {
+		major := ver / 1000
+		minor := (ver % 1000) / 10
+		cudaVersion = fmt.Sprintf("%d.%d", major, minor)
+	}
+
+	// Need at least one device to probe capabilities
+	count, ret := nvml.DeviceGetCount()
+	if ret != nvml.SUCCESS || count == 0 {
+		return buildCapabilities(supported, driverVersion, cudaVersion)
+	}
+
+	device, ret := nvml.DeviceGetHandleByIndex(0)
+	if ret != nvml.SUCCESS {
+		return buildCapabilities(supported, driverVersion, cudaVersion)
+	}
+
+	// Probe Tier 1 APIs (basic)
+	if _, ret := device.GetName(); ret == nvml.SUCCESS {
+		supported[APIName] = true
+	}
+	if _, ret := device.GetUUID(); ret == nvml.SUCCESS {
+		supported[APIUUID] = true
+	}
+	if _, ret := device.GetPciInfo(); ret == nvml.SUCCESS {
+		supported[APIPCIInfo] = true
+	}
+	if _, ret := device.GetMemoryInfo(); ret == nvml.SUCCESS {
+		supported[APIMemoryInfo] = true
+	}
+	if _, ret := device.GetTemperature(nvml.TEMPERATURE_GPU); ret == nvml.SUCCESS {
+		supported[APITemperature] = true
+	}
+	if _, ret := device.GetPowerUsage(); ret == nvml.SUCCESS {
+		supported[APIPowerUsage] = true
+	}
+	if _, ret := device.GetUtilizationRates(); ret == nvml.SUCCESS {
+		supported[APIUtilization] = true
+	}
+
+	// Probe Tier 2 APIs (health monitoring)
+	if _, ret := device.GetPowerManagementLimit(); ret == nvml.SUCCESS {
+		supported[APIPowerLimit] = true
+	}
+	// ECC mode may return ERROR_NOT_SUPPORTED on consumer GPUs
+	if _, _, ret := device.GetEccMode(); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APIEccMode] = true
+	}
+	if _, ret := device.GetTotalEccErrors(
+		nvml.MEMORY_ERROR_TYPE_CORRECTED, nvml.AGGREGATE_ECC,
+	); ret == nvml.SUCCESS || ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APIEccErrors] = true
+	}
+	if _, ret := device.GetCurrentClocksThrottleReasons(); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APIThrottleReasons] = true
+	}
+	if _, ret := device.GetClockInfo(nvml.CLOCK_GRAPHICS); ret == nvml.SUCCESS {
+		supported[APIClockInfo] = true
+	}
+	if _, ret := device.GetTemperatureThreshold(
+		nvml.TEMPERATURE_THRESHOLD_SLOWDOWN,
+	); ret == nvml.SUCCESS || ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APITempThreshold] = true
+	}
+
+	// Probe Tier 3 APIs (advanced)
+	if _, ret := device.GetNvLinkState(0); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APINVLinkState] = true
+	}
+	if _, ret := device.GetNvLinkRemotePciInfo(0); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED || ret == nvml.ERROR_INVALID_ARGUMENT {
+		supported[APINVLinkRemotePCI] = true
+	}
+	if _, ret := device.GetNvLinkErrorCounter(
+		0, nvml.NvLinkErrorCounter(NvLinkErrorDL),
+	); ret == nvml.SUCCESS || ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APINVLinkErrors] = true
+	}
+	if _, ret := device.GetComputeRunningProcesses(); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED {
+		supported[APIComputeProcesses] = true
+	}
+
+	return buildCapabilities(supported, driverVersion, cudaVersion)
 }
 
 // RealDevice is a real implementation of the Device interface.
