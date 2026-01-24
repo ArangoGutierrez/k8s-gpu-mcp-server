@@ -3,10 +3,6 @@
 
 package nvml
 
-import (
-	"context"
-)
-
 // CapabilityTier represents the level of NVML functionality available.
 // Higher tiers include all capabilities of lower tiers.
 type CapabilityTier int
@@ -18,7 +14,7 @@ const (
 	Tier1Basic
 	// Tier2Health adds: ECC, throttling, clocks, temp thresholds (Driver 510+)
 	Tier2Health
-	// Tier3Advanced adds: MIG, NVLink topology, GPU reset (Driver 535+)
+	// Tier3Advanced adds: NVLink topology/errors, compute processes (Driver 535+)
 	Tier3Advanced
 )
 
@@ -52,19 +48,21 @@ type Capabilities struct {
 
 // API names for capability probing results.
 const (
-	APIName              = "name"
-	APIUUID              = "uuid"
-	APIPCIInfo           = "pci_info"
-	APIMemoryInfo        = "memory_info"
-	APITemperature       = "temperature"
-	APIPowerUsage        = "power_usage"
-	APIUtilization       = "utilization"
-	APIPowerLimit        = "power_limit"
-	APIEccMode           = "ecc_mode"
-	APIEccErrors         = "ecc_errors"
-	APIThrottleReasons   = "throttle_reasons"
-	APIClockInfo         = "clock_info"
-	APITempThreshold     = "temp_threshold"
+	APIName            = "name"
+	APIUUID            = "uuid"
+	APIPCIInfo         = "pci_info"
+	APIMemoryInfo      = "memory_info"
+	APITemperature     = "temperature"
+	APIPowerUsage      = "power_usage"
+	APIUtilization     = "utilization"
+	APIPowerLimit      = "power_limit"
+	APIEccMode         = "ecc_mode"
+	APIEccErrors       = "ecc_errors"
+	APIThrottleReasons = "throttle_reasons"
+	APIClockInfo       = "clock_info"
+	APITempThreshold   = "temp_threshold"
+	// APIComputeCapability is probed for informational purposes but does not
+	// affect tier calculation (always available on supported drivers).
 	APIComputeCapability = "compute_capability"
 	APINVLinkState       = "nvlink_state"
 	APINVLinkRemotePCI   = "nvlink_remote_pci"
@@ -193,78 +191,4 @@ func (c *Capabilities) DegradedReason() string {
 	default:
 		return "running in degraded mode"
 	}
-}
-
-// Prober provides capability detection for NVML implementations.
-// It probes device APIs to determine what features are supported.
-type Prober struct{}
-
-// Probe performs capability detection against a device.
-// It returns a map of API names to support status.
-func (p *Prober) Probe(ctx context.Context, device Device) map[string]bool {
-	supported := make(map[string]bool)
-
-	// Probe Tier 1 APIs (basic)
-	if _, err := device.GetName(ctx); err == nil {
-		supported[APIName] = true
-	}
-	if _, err := device.GetUUID(ctx); err == nil {
-		supported[APIUUID] = true
-	}
-	if _, err := device.GetPCIInfo(ctx); err == nil {
-		supported[APIPCIInfo] = true
-	}
-	if _, err := device.GetMemoryInfo(ctx); err == nil {
-		supported[APIMemoryInfo] = true
-	}
-	if _, err := device.GetTemperature(ctx); err == nil {
-		supported[APITemperature] = true
-	}
-	if _, err := device.GetPowerUsage(ctx); err == nil {
-		supported[APIPowerUsage] = true
-	}
-	if _, err := device.GetUtilizationRates(ctx); err == nil {
-		supported[APIUtilization] = true
-	}
-
-	// Probe Tier 2 APIs (health monitoring)
-	if _, err := device.GetPowerManagementLimit(ctx); err == nil {
-		supported[APIPowerLimit] = true
-	}
-	// ECC mode returns false,false,nil if not supported, so check actual call
-	if _, _, err := device.GetEccMode(ctx); err == nil {
-		supported[APIEccMode] = true
-	}
-	if _, err := device.GetTotalEccErrors(ctx, EccErrorCorrectable); err == nil {
-		supported[APIEccErrors] = true
-	}
-	if _, err := device.GetCurrentClocksThrottleReasons(ctx); err == nil {
-		supported[APIThrottleReasons] = true
-	}
-	if _, err := device.GetClockInfo(ctx, ClockGraphics); err == nil {
-		supported[APIClockInfo] = true
-	}
-	if _, err := device.GetTemperatureThreshold(ctx, TempThresholdSlowdown); err == nil {
-		supported[APITempThreshold] = true
-	}
-
-	// Probe Tier 3 APIs (advanced)
-	if _, err := device.GetNvLinkState(ctx, 0); err == nil {
-		supported[APINVLinkState] = true
-	}
-	if _, err := device.GetNvLinkRemotePciInfo(ctx, 0); err == nil {
-		supported[APINVLinkRemotePCI] = true
-	}
-	if _, err := device.GetNvLinkErrorCounter(ctx, 0, NvLinkErrorDL); err == nil {
-		supported[APINVLinkErrors] = true
-	}
-	if _, err := device.GetComputeRunningProcesses(ctx); err == nil {
-		supported[APIComputeProcesses] = true
-	}
-	// Note: compute capability is always available on supported drivers
-	if _, err := device.GetCudaComputeCapability(ctx); err == nil {
-		supported[APIComputeCapability] = true
-	}
-
-	return supported
 }

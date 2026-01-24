@@ -175,6 +175,9 @@ func (r *Real) GetCapabilities(ctx context.Context) (*Capabilities, error) {
 		return nil, fmt.Errorf("%w: %w", ErrContextCancelled, err)
 	}
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if !r.initialized {
 		return nil, ErrNotInitialized
 	}
@@ -183,6 +186,11 @@ func (r *Real) GetCapabilities(ctx context.Context) (*Capabilities, error) {
 
 // probeCapabilities detects available NVML capabilities by testing APIs.
 func (r *Real) probeCapabilities(ctx context.Context) *Capabilities {
+	// Check context cancellation at start
+	if ctx.Err() != nil {
+		return buildCapabilities(nil, "", "")
+	}
+
 	supported := make(map[string]bool)
 
 	// Get driver version
@@ -231,8 +239,14 @@ func (r *Real) probeCapabilities(ctx context.Context) *Capabilities {
 		supported[APIUtilization] = true
 	}
 
+	// Check context cancellation between tier groups
+	if ctx.Err() != nil {
+		return buildCapabilities(supported, driverVersion, cudaVersion)
+	}
+
 	// Probe Tier 2 APIs (health monitoring)
-	if _, ret := device.GetPowerManagementLimit(); ret == nvml.SUCCESS {
+	if _, ret := device.GetPowerManagementLimit(); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED {
 		supported[APIPowerLimit] = true
 	}
 	// ECC mode may return ERROR_NOT_SUPPORTED on consumer GPUs
@@ -249,13 +263,19 @@ func (r *Real) probeCapabilities(ctx context.Context) *Capabilities {
 		ret == nvml.ERROR_NOT_SUPPORTED {
 		supported[APIThrottleReasons] = true
 	}
-	if _, ret := device.GetClockInfo(nvml.CLOCK_GRAPHICS); ret == nvml.SUCCESS {
+	if _, ret := device.GetClockInfo(nvml.CLOCK_GRAPHICS); ret == nvml.SUCCESS ||
+		ret == nvml.ERROR_NOT_SUPPORTED {
 		supported[APIClockInfo] = true
 	}
 	if _, ret := device.GetTemperatureThreshold(
 		nvml.TEMPERATURE_THRESHOLD_SLOWDOWN,
 	); ret == nvml.SUCCESS || ret == nvml.ERROR_NOT_SUPPORTED {
 		supported[APITempThreshold] = true
+	}
+
+	// Check context cancellation between tier groups
+	if ctx.Err() != nil {
+		return buildCapabilities(supported, driverVersion, cudaVersion)
 	}
 
 	// Probe Tier 3 APIs (advanced)

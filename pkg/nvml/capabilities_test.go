@@ -243,26 +243,6 @@ func TestCapabilities_DegradedReason(t *testing.T) {
 	}
 }
 
-func TestProber_Probe(t *testing.T) {
-	ctx := context.Background()
-	mock := NewMock(1)
-	prober := &Prober{}
-
-	supported := prober.Probe(ctx, mock.devices[0])
-
-	// Mock device should support all Tier 1 and 2 APIs
-	assert.True(t, supported[APIName])
-	assert.True(t, supported[APIUUID])
-	assert.True(t, supported[APIPCIInfo])
-	assert.True(t, supported[APIMemoryInfo])
-	assert.True(t, supported[APITemperature])
-	assert.True(t, supported[APIPowerUsage])
-	assert.True(t, supported[APIUtilization])
-	assert.True(t, supported[APIPowerLimit])
-	assert.True(t, supported[APIEccMode])
-	assert.True(t, supported[APIClockInfo])
-}
-
 func TestMock_GetCapabilities(t *testing.T) {
 	ctx := context.Background()
 	mock := NewMock(2)
