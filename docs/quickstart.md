@@ -94,6 +94,9 @@ echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_gpu_inventory
 
 ## Kubernetes Deployment
 
+> 📖 For comprehensive Kubernetes deployment documentation, see the
+> [Kubernetes Deployment Guide](kubernetes.md).
+
 ### Prerequisites
 
 **GPU Access** — one of:
