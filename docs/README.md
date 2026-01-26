@@ -11,7 +11,12 @@ Agent for NVIDIA GPU Clusters on Kubernetes.
   - Installation options (npm, source, container)
   - Basic usage examples
   - Testing with mock/real GPUs
-  - Kubernetes deployment with Helm
+
+- **[Kubernetes Deployment](kubernetes.md)** - Complete K8s deployment guide
+  - Prerequisites (GPU Operator, RuntimeClass)
+  - Helm installation options
+  - Gateway configuration
+  - AI assistant integration (Claude Desktop, Cursor)
 
 ### Understanding the Project
 
@@ -87,7 +92,7 @@ Agent for NVIDIA GPU Clusters on Kubernetes.
 - [Contributing](../DEVELOPMENT.md#development-workflow)
 
 ### For SREs
-- [Kubernetes Deployment](quickstart.md#kubernetes-deployment)
+- [Kubernetes Deployment](kubernetes.md)
 - [Security & RBAC](security.md)
 - [Gateway Architecture](architecture.md#gateway-architecture)
 - [Performance](architecture.md#performance-considerations)

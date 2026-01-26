@@ -147,7 +147,7 @@ For deployed agents, add to your Claude Desktop configuration:
 
 Then ask Claude: *"What's the temperature of the GPUs?"*
 
-📖 **[Full Quick Start Guide →](docs/quickstart.md)**
+📖 **[Full Quick Start Guide →](docs/quickstart.md)** | **[Kubernetes Deployment →](docs/kubernetes.md)**
 
 ---
 
@@ -362,7 +362,9 @@ for details.
 ## 📚 Documentation
 
 - **[Quick Start Guide](docs/quickstart.md)** - Get running in 5 minutes
+- **[Kubernetes Deployment](docs/kubernetes.md)** - K8s deployment and configuration
 - **[Architecture](docs/architecture.md)** - System design and components
+- **[Security Model](docs/security.md)** - RBAC and security configuration
 - **[MCP Usage](docs/mcp-usage.md)** - How to consume the MCP server
 - **[Development Guide](DEVELOPMENT.md)** - Contributing guidelines
 - **[Examples](examples/)** - Sample JSON-RPC requests
