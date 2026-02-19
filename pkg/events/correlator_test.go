@@ -5,6 +5,9 @@ package events
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -887,5 +890,121 @@ func TestCorrelator_Integration_ThermalCascade(t *testing.T) {
 	causality := c.DetectCausality(incident)
 	if causality != CausalityThermalCascade {
 		t.Errorf("causality = %q, want %q", causality, CausalityThermalCascade)
+	}
+}
+
+// --- Concurrency stress tests ---
+
+func TestCorrelatorConcurrentCorrelate(t *testing.T) {
+	t.Parallel()
+
+	c := NewCorrelator(nil, nil, nil)
+
+	const numGoroutines = 50
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	incidents := make([]*CorrelatedIncident, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+
+			trigger := Event{
+				Type:      "k8s",
+				Timestamp: time.Now(),
+				Source:    fmt.Sprintf("test-%d", id),
+				Data: K8sEvent{
+					Reason:    ReasonFailed,
+					PodName:   fmt.Sprintf("pod-%d", id),
+					Namespace: "default",
+				},
+			}
+
+			incidents[id] = c.Correlate(context.Background(), trigger)
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Verify all incidents were created with unique IDs
+	seenIDs := make(map[string]bool)
+	for i, inc := range incidents {
+		if inc == nil {
+			t.Errorf("incident %d is nil", i)
+			continue
+		}
+		if inc.ID == "" {
+			t.Errorf("incident %d has empty ID", i)
+			continue
+		}
+		if seenIDs[inc.ID] {
+			t.Errorf("duplicate incident ID: %s", inc.ID)
+		}
+		seenIDs[inc.ID] = true
+
+		if inc.Trigger.Source != fmt.Sprintf("test-%d", i) {
+			t.Errorf("incident %d has wrong source: %s", i, inc.Trigger.Source)
+		}
+	}
+}
+
+func TestCorrelatorConcurrentEventIngestion(t *testing.T) {
+	t.Parallel()
+
+	c := NewCorrelator(nil, nil, nil)
+
+	const numGoroutines = 50
+	const eventsPerGoroutine = 20
+	totalEvents := numGoroutines * eventsPerGoroutine
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	var completedCount atomic.Int64
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+
+			for j := 0; j < eventsPerGoroutine; j++ {
+				if ctx.Err() != nil {
+					return
+				}
+
+				trigger := Event{
+					Type:      "xid",
+					Timestamp: time.Now(),
+					Source:    "xid.Watcher",
+					Data: xid.XIDEvent{
+						XIDCode:   79 + (j % 10),
+						Severity:  "critical",
+						PCIBusID:  fmt.Sprintf("0000:00:%02X.0", id),
+						PodName:   fmt.Sprintf("pod-%d-%d", id, j),
+						Namespace: "gpu-workloads",
+					},
+				}
+
+				incident := c.Correlate(ctx, trigger)
+				if incident != nil && incident.ID != "" {
+					completedCount.Add(1)
+				}
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	completed := completedCount.Load()
+	if completed != int64(totalEvents) {
+		t.Errorf("completed %d correlations, want %d", completed, totalEvents)
 	}
 }
