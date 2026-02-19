@@ -167,6 +167,7 @@ func (w *K8sWatcher) Stop() {
 		return
 	}
 
+	w.synced.Store(false)
 	close(w.stopCh)
 	w.wg.Wait()
 	w.logger.Info("k8s event watcher stopped")

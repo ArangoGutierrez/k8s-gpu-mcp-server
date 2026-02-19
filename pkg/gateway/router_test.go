@@ -284,9 +284,9 @@ func TestRouterRouteToAllNodes_ContextCancelled(t *testing.T) {
 	cancel()
 
 	results, err := router.RouteToAllNodes(ctx, []byte("{}"))
-	// Should return promptly with context error or partial results
-	// The key assertion is that we return quickly, not hang
-	_ = results
-	_ = err
-	// If we reach here within the test timeout, the context check works
+	// With cancelled context, the node iteration loop breaks early
+	// via the ctx.Err() check, so no nodes are processed.
+	// The function returns empty results without error (no failures to report).
+	require.NoError(t, err)
+	assert.Empty(t, results, "no nodes should be processed when context is cancelled")
 }
