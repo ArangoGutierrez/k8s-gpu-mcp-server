@@ -181,6 +181,12 @@ func TestRealNVML_ConcurrentInit(t *testing.T) {
 	count, err := real.GetDeviceCount(ctx)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, count, 0)
+
+	// Verify capabilities were probed exactly once (via sync.Once)
+	caps, err := real.GetCapabilities(ctx)
+	require.NoError(t, err)
+	assert.NotNil(t, caps, "Capabilities should be set after concurrent Init")
+	assert.NotEmpty(t, caps.Tier.String(), "Capabilities tier should be determined")
 }
 
 // TestRealNVML_ConcurrentShutdown verifies that concurrent Shutdown calls

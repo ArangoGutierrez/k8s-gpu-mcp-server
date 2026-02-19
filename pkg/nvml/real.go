@@ -22,6 +22,7 @@ type Real struct {
 	mu                     sync.Mutex
 	initialized            bool
 	capabilities           *Capabilities
+	capabilitiesProbed     bool
 }
 
 // Compile-time interface satisfaction checks.
@@ -60,8 +61,12 @@ func (r *Real) Init(ctx context.Context) error {
 
 	r.initialized = true
 
-	// Probe capabilities after successful init
-	r.capabilities = r.probeCapabilities(ctx)
+	// Probe capabilities once per Init/Shutdown cycle.
+	// The mutex already provides synchronization.
+	if !r.capabilitiesProbed {
+		r.capabilities = r.probeCapabilities(ctx)
+		r.capabilitiesProbed = true
+	}
 	return nil
 }
 
@@ -87,6 +92,7 @@ func (r *Real) Shutdown(ctx context.Context) error {
 	}
 
 	r.initialized = false
+	r.capabilitiesProbed = false
 	return nil
 }
 

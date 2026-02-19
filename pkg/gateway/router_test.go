@@ -5,6 +5,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/k8s"
@@ -238,4 +239,54 @@ func TestRouter_MetricsRecording(t *testing.T) {
 	// Verify observations were recorded
 	count := testutil.CollectAndCount(metrics.GatewayRequestDuration)
 	assert.Greater(t, count, 0, "Should have recorded gateway request metrics")
+}
+
+func TestRouterRouteToAllNodes_ContextCancelled(t *testing.T) {
+	// Create multiple ready pods across nodes
+	var pods []corev1.Pod
+	for i := 0; i < 5; i++ {
+		pods = append(pods, corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("gpu-agent-%d", i),
+				Namespace: "gpu-diagnostics",
+				Labels: map[string]string{
+					"app.kubernetes.io/name": "k8s-gpu-mcp-server",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: fmt.Sprintf("gpu-node-%d", i),
+			},
+			Status: corev1.PodStatus{
+				PodIP: fmt.Sprintf("10.0.0.%d", i+1),
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodReady,
+						Status: corev1.ConditionTrue,
+					},
+				},
+			},
+		})
+	}
+
+	//nolint:staticcheck // NewSimpleClientset is used for testing without apply config
+	clientset := fake.NewSimpleClientset()
+	for _, pod := range pods {
+		_, err := clientset.CoreV1().Pods(pod.Namespace).
+			Create(context.Background(), &pod, metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+
+	k8sClient := k8s.NewClientWithConfig(clientset, nil, "gpu-diagnostics")
+	router := NewRouter(k8sClient)
+
+	// Cancel context before routing
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	results, err := router.RouteToAllNodes(ctx, []byte("{}"))
+	// With cancelled context, the node iteration loop breaks early
+	// via the ctx.Err() check, so no nodes are processed.
+	// The function returns empty results without error (no failures to report).
+	require.NoError(t, err)
+	assert.Empty(t, results, "no nodes should be processed when context is cancelled")
 }

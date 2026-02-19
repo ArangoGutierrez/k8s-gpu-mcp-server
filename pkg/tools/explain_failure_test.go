@@ -34,7 +34,10 @@ func extractTextContent(t *testing.T, result *mcp.CallToolResult) string {
 func TestExplainFailureHandler_Handle_PodNotFound(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -65,7 +68,10 @@ func TestExplainFailureHandler_Handle_PodNotFailed(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -102,7 +108,10 @@ func TestExplainFailureHandler_Handle_FailedPod(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -166,7 +175,10 @@ func TestExplainFailureHandler_Handle_OOMKilled(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -221,7 +233,10 @@ func TestExplainFailureHandler_Handle_TerminatedContainer(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -279,7 +294,10 @@ func TestExplainFailureHandler_Handle_FailedInitContainer(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -310,7 +328,10 @@ func TestExplainFailureHandler_Handle_FailedInitContainer(t *testing.T) {
 }
 
 func TestExplainFailureHandler_parseArgs_RequiredPodName(t *testing.T) {
-	handler := NewExplainFailureHandler(nil)
+	handler, err := NewExplainFailureHandler(nil)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -600,7 +621,10 @@ func TestGetConditionTime_ExplainFailure(t *testing.T) {
 }
 
 func TestExplainFailureHandler_buildMinimalIncident(t *testing.T) {
-	handler := NewExplainFailureHandler(nil)
+	handler, err := NewExplainFailureHandler(nil)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	failure := &PodFailure{
 		Pod: &corev1.Pod{
@@ -644,7 +668,10 @@ func TestExplainFailureHandler_buildMinimalIncident(t *testing.T) {
 }
 
 func TestExplainFailureHandler_buildResponse(t *testing.T) {
-	handler := NewExplainFailureHandler(nil)
+	handler, err := NewExplainFailureHandler(nil)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	failure := &PodFailure{
 		Pod: &corev1.Pod{
@@ -716,18 +743,24 @@ func TestExplainFailureHandler_WithOptions(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	t.Run("WithNamespace sets custom namespace", func(t *testing.T) {
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithNamespace("custom-ns"),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.namespace != "custom-ns" {
 			t.Errorf("expected namespace 'custom-ns', got %s", handler.namespace)
 		}
 	})
 
 	t.Run("WithNamespace empty does not override default", func(t *testing.T) {
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithNamespace(""),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.namespace != "default" {
 			t.Errorf("expected namespace 'default', got %s", handler.namespace)
 		}
@@ -735,9 +768,12 @@ func TestExplainFailureHandler_WithOptions(t *testing.T) {
 
 	t.Run("WithCorrelator sets correlator", func(t *testing.T) {
 		// WithCorrelator(nil) should set correlator to nil
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithCorrelator(nil),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.correlator != nil {
 			t.Error("expected correlator to be nil")
 		}
@@ -745,37 +781,52 @@ func TestExplainFailureHandler_WithOptions(t *testing.T) {
 
 	t.Run("WithAnalyzer sets custom analyzer", func(t *testing.T) {
 		customAnalyzer := incidents.NewAnalyzer()
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithAnalyzer(customAnalyzer),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.analyzer != customAnalyzer {
 			t.Error("expected custom analyzer to be set")
 		}
 	})
 
 	t.Run("WithAnalyzer nil sets nil", func(t *testing.T) {
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithAnalyzer(nil),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.analyzer != nil {
 			t.Error("expected analyzer to be nil")
 		}
 	})
 
 	t.Run("WithExplainer sets custom explainer", func(t *testing.T) {
-		customExplainer := incidents.NewExplainer()
-		handler := NewExplainFailureHandler(clientset,
+		customExplainer, err := incidents.NewExplainer()
+		if err != nil {
+			t.Fatalf("NewExplainer error: %v", err)
+		}
+		handler, err := NewExplainFailureHandler(clientset,
 			WithExplainer(customExplainer),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.explainer != customExplainer {
 			t.Error("expected custom explainer to be set")
 		}
 	})
 
 	t.Run("WithExplainer nil sets nil", func(t *testing.T) {
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithExplainer(nil),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 		if handler.explainer != nil {
 			t.Error("expected explainer to be nil")
 		}
@@ -783,13 +834,19 @@ func TestExplainFailureHandler_WithOptions(t *testing.T) {
 
 	t.Run("multiple options applied in order", func(t *testing.T) {
 		customAnalyzer := incidents.NewAnalyzer()
-		customExplainer := incidents.NewExplainer()
+		customExplainer, err := incidents.NewExplainer()
+		if err != nil {
+			t.Fatalf("NewExplainer error: %v", err)
+		}
 
-		handler := NewExplainFailureHandler(clientset,
+		handler, err := NewExplainFailureHandler(clientset,
 			WithNamespace("prod"),
 			WithAnalyzer(customAnalyzer),
 			WithExplainer(customExplainer),
 		)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 
 		if handler.namespace != "prod" {
 			t.Errorf("expected namespace 'prod', got %s", handler.namespace)
@@ -803,7 +860,10 @@ func TestExplainFailureHandler_WithOptions(t *testing.T) {
 	})
 
 	t.Run("default values when no options", func(t *testing.T) {
-		handler := NewExplainFailureHandler(clientset)
+		handler, err := NewExplainFailureHandler(clientset)
+		if err != nil {
+			t.Fatalf("NewExplainFailureHandler error: %v", err)
+		}
 
 		if handler.namespace != "default" {
 			t.Errorf("expected default namespace 'default', got %s", handler.namespace)
@@ -834,7 +894,10 @@ func TestExplainFailureHandler_Handle_DefaultNamespace(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	// Don't provide namespace - should use default
 	request := mcp.CallToolRequest{}
@@ -855,7 +918,10 @@ func TestExplainFailureHandler_Handle_DefaultNamespace(t *testing.T) {
 func TestExplainFailureHandler_Handle_ContextCancellation(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewExplainFailureHandler(clientset)
+	handler, err := NewExplainFailureHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewExplainFailureHandler error: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately

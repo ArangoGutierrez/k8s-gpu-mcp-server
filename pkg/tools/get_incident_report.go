@@ -77,18 +77,23 @@ func WithIncidentNamespace(ns string) GetIncidentReportOption {
 func NewGetIncidentReportHandler(
 	k8sClientset kubernetes.Interface,
 	opts ...GetIncidentReportOption,
-) *GetIncidentReportHandler {
+) (*GetIncidentReportHandler, error) {
+	explainer, err := incidents.NewExplainer()
+	if err != nil {
+		return nil, fmt.Errorf("create explainer: %w", err)
+	}
+
 	h := &GetIncidentReportHandler{
 		k8sClientset:  k8sClientset,
 		namespace:     "default",
 		analyzer:      incidents.NewAnalyzer(),
-		explainer:     incidents.NewExplainer(),
+		explainer:     explainer,
 		incidentCache: make(map[string]*events.CorrelatedIncident),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
-	return h
+	return h, nil
 }
 
 // CacheIncident stores an incident for later lookup by ID.

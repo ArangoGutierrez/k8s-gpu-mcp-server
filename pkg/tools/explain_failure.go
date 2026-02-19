@@ -63,17 +63,22 @@ func WithNamespace(ns string) ExplainFailureOption {
 func NewExplainFailureHandler(
 	k8sClientset kubernetes.Interface,
 	opts ...ExplainFailureOption,
-) *ExplainFailureHandler {
+) (*ExplainFailureHandler, error) {
+	explainer, err := incidents.NewExplainer()
+	if err != nil {
+		return nil, fmt.Errorf("create explainer: %w", err)
+	}
+
 	h := &ExplainFailureHandler{
 		k8sClientset: k8sClientset,
 		namespace:    "default",
 		analyzer:     incidents.NewAnalyzer(),
-		explainer:    incidents.NewExplainer(),
+		explainer:    explainer,
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
-	return h
+	return h, nil
 }
 
 // findPodFailure locates the pod and extracts failure information.

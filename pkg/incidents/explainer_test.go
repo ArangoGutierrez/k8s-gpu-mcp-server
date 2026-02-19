@@ -14,8 +14,10 @@ import (
 )
 
 func TestNewExplainer(t *testing.T) {
-	// Should not panic
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	if e == nil {
 		t.Fatal("NewExplainer returned nil")
 	}
@@ -28,7 +30,10 @@ func TestNewExplainer(t *testing.T) {
 }
 
 func TestGenerateExplanation_ThermalCascade(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	incident := &events.CorrelatedIncident{
@@ -85,7 +90,10 @@ func TestGenerateExplanation_ThermalCascade(t *testing.T) {
 }
 
 func TestGenerateExplanation_MemoryFailure(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	incident := &events.CorrelatedIncident{
@@ -139,7 +147,10 @@ func TestGenerateExplanation_MemoryFailure(t *testing.T) {
 }
 
 func TestGenerateExplanation_SoftwareOOM(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	incident := &events.CorrelatedIncident{
@@ -177,7 +188,10 @@ func TestGenerateExplanation_SoftwareOOM(t *testing.T) {
 }
 
 func TestGenerateExplanation_Unknown(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	incident := &events.CorrelatedIncident{
@@ -220,7 +234,10 @@ func TestGenerateExplanation_Unknown(t *testing.T) {
 }
 
 func TestGenerateExplanation_NilIncident(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	explanation := e.GenerateExplanation(nil)
 
 	if explanation != "No incident data available." {
@@ -229,7 +246,10 @@ func TestGenerateExplanation_NilIncident(t *testing.T) {
 }
 
 func TestGenerateExplanation_NoPod(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	incident := &events.CorrelatedIncident{
@@ -253,7 +273,10 @@ func TestGenerateExplanation_NoPod(t *testing.T) {
 }
 
 func TestGenerateSummary(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	tests := []struct {
@@ -290,7 +313,10 @@ func TestGenerateSummary(t *testing.T) {
 }
 
 func TestGenerateSummary_NilIncident(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	summary := e.GenerateSummary(nil)
 
 	if summary != "No incident data available." {
@@ -299,7 +325,10 @@ func TestGenerateSummary_NilIncident(t *testing.T) {
 }
 
 func TestGenerateTimeline(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	incident := &events.CorrelatedIncident{
@@ -350,7 +379,10 @@ func TestGenerateTimeline(t *testing.T) {
 }
 
 func TestGenerateTimeline_Empty(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 
 	// Nil incident
 	timeline := e.GenerateTimeline(nil)
@@ -433,7 +465,10 @@ func TestFormatRelativeTime(t *testing.T) {
 }
 
 func TestExtractData_Causality(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	tests := []struct {
@@ -467,7 +502,10 @@ func TestExtractData_Causality(t *testing.T) {
 }
 
 func TestSelectTemplateKey(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 
 	tests := []struct {
 		causality string
@@ -491,7 +529,10 @@ func TestSelectTemplateKey(t *testing.T) {
 }
 
 func TestFindClosestSnapshot(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	base := time.Date(2026, 1, 20, 12, 0, 0, 0, time.UTC)
 
 	snapshots := []blackbox.GPUSnapshot{
@@ -520,7 +561,10 @@ func TestFindClosestSnapshot(t *testing.T) {
 }
 
 func TestCalculateThrottleDuration(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	base := time.Date(2026, 1, 20, 12, 0, 0, 0, time.UTC)
 
 	// With throttling
@@ -559,7 +603,10 @@ func TestCalculateThrottleDuration(t *testing.T) {
 }
 
 func TestExtractNode(t *testing.T) {
-	e := NewExplainer()
+	e, err := NewExplainer()
+	if err != nil {
+		t.Fatalf("NewExplainer returned error: %v", err)
+	}
 	now := time.Now()
 
 	// From trigger

@@ -299,6 +299,13 @@ func (r *Router) RouteToAllNodes(
 	skippedCount := 0
 
 	for _, node := range nodes {
+		// Check context between node iterations for prompt shutdown
+		if ctx.Err() != nil {
+			klog.V(2).InfoS("context cancelled, stopping node iteration",
+				"requestID", requestID, "remaining", len(nodes))
+			break
+		}
+
 		if !node.Ready {
 			klog.V(2).InfoS("skipping unready node",
 				"requestID", requestID, "node", node.Name)
