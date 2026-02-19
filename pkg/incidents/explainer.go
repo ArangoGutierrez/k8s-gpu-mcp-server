@@ -64,8 +64,8 @@ type Explainer struct {
 }
 
 // NewExplainer creates a new Explainer with compiled templates.
-// Panics if any template fails to parse (indicates programmer error).
-func NewExplainer() *Explainer {
+// Returns an error if any template fails to parse.
+func NewExplainer() (*Explainer, error) {
 	e := &Explainer{
 		explanationTemplates: make(map[string]*template.Template),
 		summaryTemplates:     make(map[string]*template.Template),
@@ -75,7 +75,7 @@ func NewExplainer() *Explainer {
 	for name, tmplStr := range explanationTemplates {
 		tmpl, err := template.New(name).Funcs(templateFuncs).Parse(tmplStr)
 		if err != nil {
-			panic(fmt.Sprintf("failed to parse explanation template %q: %v", name, err))
+			return nil, fmt.Errorf("failed to parse explanation template %q: %w", name, err)
 		}
 		e.explanationTemplates[name] = tmpl
 	}
@@ -84,12 +84,12 @@ func NewExplainer() *Explainer {
 	for name, tmplStr := range summaryTemplates {
 		tmpl, err := template.New(name + "_summary").Funcs(templateFuncs).Parse(tmplStr)
 		if err != nil {
-			panic(fmt.Sprintf("failed to parse summary template %q: %v", name, err))
+			return nil, fmt.Errorf("failed to parse summary template %q: %w", name, err)
 		}
 		e.summaryTemplates[name] = tmpl
 	}
 
-	return e
+	return e, nil
 }
 
 // GenerateExplanation produces a full human-readable explanation of the incident.

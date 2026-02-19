@@ -22,6 +22,7 @@ type Real struct {
 	mu                     sync.Mutex
 	initialized            bool
 	capabilities           *Capabilities
+	probeOnce              sync.Once
 }
 
 // Compile-time interface satisfaction checks.
@@ -60,8 +61,11 @@ func (r *Real) Init(ctx context.Context) error {
 
 	r.initialized = true
 
-	// Probe capabilities after successful init
-	r.capabilities = r.probeCapabilities(ctx)
+	// Probe capabilities exactly once, even under concurrent Init() calls.
+	// sync.Once guarantees probeCapabilities runs at most once.
+	r.probeOnce.Do(func() {
+		r.capabilities = r.probeCapabilities(ctx)
+	})
 	return nil
 }
 

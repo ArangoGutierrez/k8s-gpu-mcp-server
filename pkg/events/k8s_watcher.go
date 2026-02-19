@@ -39,7 +39,9 @@ type K8sWatcher struct {
 
 	// Lifecycle
 	running atomic.Bool
+	synced  atomic.Bool
 	stopCh  chan struct{}
+	wg      sync.WaitGroup
 }
 
 // WatcherOption configures a K8sWatcher.
@@ -134,13 +136,20 @@ func (w *K8sWatcher) Start(ctx context.Context) error {
 	w.stopCh = make(chan struct{})
 
 	// Start informer in background
-	go w.informer.Run(w.stopCh)
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		w.informer.Run(w.stopCh)
+	}()
 
 	// Wait for cache sync
+	w.wg.Add(1)
 	go func() {
+		defer w.wg.Done()
 		if !cache.WaitForCacheSync(w.stopCh, w.informer.HasSynced) {
 			w.logger.Error("failed to sync informer cache")
 		} else {
+			w.synced.Store(true)
 			w.logger.Info("k8s event watcher started",
 				"node", w.nodeName,
 				"bufferSize", w.config.BufferSize,
@@ -151,7 +160,7 @@ func (w *K8sWatcher) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully shuts down the watcher.
+// Stop gracefully shuts down the watcher and waits for all goroutines.
 // Safe to call multiple times or if not started.
 func (w *K8sWatcher) Stop() {
 	if !w.running.CompareAndSwap(true, false) {
@@ -159,12 +168,25 @@ func (w *K8sWatcher) Stop() {
 	}
 
 	close(w.stopCh)
+	w.wg.Wait()
 	w.logger.Info("k8s event watcher stopped")
 }
 
 // IsRunning returns true if the watcher is actively watching events.
 func (w *K8sWatcher) IsRunning() bool {
 	return w.running.Load()
+}
+
+// IsSynced returns true if the informer cache has been synced successfully.
+// Returns false if the watcher hasn't started, sync failed, or sync is in progress.
+func (w *K8sWatcher) IsSynced() bool {
+	return w.synced.Load()
+}
+
+// Wait blocks until all watcher goroutines have completed.
+// Typically called after Stop() to ensure clean shutdown.
+func (w *K8sWatcher) Wait() {
+	w.wg.Wait()
 }
 
 // GetEvents returns events newer than the given timestamp.
@@ -199,10 +221,16 @@ func (w *K8sWatcher) EventCount() int {
 // RegisterHandler adds a callback for real-time event notifications.
 // Handlers are called synchronously in the informer goroutine.
 // For long-running operations, handlers should spawn their own goroutine.
+// Uses copy-on-write to avoid races with concurrent handleEvent iteration.
 func (w *K8sWatcher) RegisterHandler(handler EventHandler) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.handlers = append(w.handlers, handler)
+	// Copy-on-write: create a new slice to avoid mutating one that
+	// handleEvent may be iterating over.
+	newHandlers := make([]EventHandler, len(w.handlers)+1)
+	copy(newHandlers, w.handlers)
+	newHandlers[len(w.handlers)] = handler
+	w.handlers = newHandlers
 }
 
 // handleEvent processes an incoming Kubernetes event.

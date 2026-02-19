@@ -168,17 +168,23 @@ func New(cfg Config) (*Server, error) {
 		// Gateway-only: requires K8s API access to query pod status.
 		// In gateway mode, correlator/recorder are nil, so handler
 		// falls back to minimal analysis based on K8s data only.
-		explainHandler := tools.NewExplainFailureHandler(
+		explainHandler, err := tools.NewExplainFailureHandler(
 			cfg.K8sClient.Clientset(),
 		)
+		if err != nil {
+			return nil, fmt.Errorf("create explain_failure handler: %w", err)
+		}
 		mcpServer.AddTool(tools.GetExplainFailureTool(), explainHandler.Handle)
 
 		// get_incident_report - detailed incident report tool
 		// Gateway-only: requires K8s API access to query pod status.
 		// Provides comprehensive incident data for deep debugging and post-mortems.
-		reportHandler := tools.NewGetIncidentReportHandler(
+		reportHandler, err := tools.NewGetIncidentReportHandler(
 			cfg.K8sClient.Clientset(),
 		)
+		if err != nil {
+			return nil, fmt.Errorf("create get_incident_report handler: %w", err)
+		}
 		mcpServer.AddTool(tools.GetIncidentReportTool(), reportHandler.Handle)
 
 		// get_gpu_timeline - historical GPU metrics from flight recorder

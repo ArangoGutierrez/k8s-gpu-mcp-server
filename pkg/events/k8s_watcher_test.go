@@ -474,6 +474,71 @@ func TestK8sWatcher_RegisterHandler(t *testing.T) {
 	}
 }
 
+func TestK8sWatcher_ConcurrentRegisterAndHandle(t *testing.T) {
+	//nolint:staticcheck // NewSimpleClientset used for testing
+	client := fake.NewSimpleClientset()
+	nodeName := "gpu-node-01"
+
+	w, err := NewK8sWatcher(client, WatcherConfig{
+		NodeName:   nodeName,
+		BufferSize: 100,
+	})
+	if err != nil {
+		t.Fatalf("NewK8sWatcher() error = %v", err)
+	}
+
+	var totalCalls sync.Map
+	const numHandlers = 10
+	const numEvents = 50
+
+	// Register handlers concurrently while events are being processed
+	var wg sync.WaitGroup
+
+	// Goroutine: register handlers
+	for i := 0; i < numHandlers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			w.RegisterHandler(func(event K8sEvent) {
+				totalCalls.Store(id, true)
+			})
+		}(i)
+	}
+
+	// Goroutine: fire events concurrently
+	for i := 0; i < numEvents; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			event := &corev1.Event{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "concurrent-event",
+					Namespace: "default",
+				},
+				InvolvedObject: corev1.ObjectReference{
+					Kind:      "Pod",
+					Name:      "test-pod",
+					Namespace: "default",
+				},
+				Type:   corev1.EventTypeWarning,
+				Reason: ReasonOOMKilled,
+				Source: corev1.EventSource{
+					Host: nodeName,
+				},
+				LastTimestamp: metav1.Now(),
+			}
+			w.handleEvent(event)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify no panics or races occurred (race detector will catch issues)
+	if w.EventCount() == 0 {
+		t.Error("expected some events to be captured")
+	}
+}
+
 func TestK8sWatcher_ConvertEvent_Timestamps(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	client := fake.NewSimpleClientset()
@@ -670,6 +735,39 @@ func TestEventBuffer_GetByReason(t *testing.T) {
 	oomEvents := buf.GetByReason(ReasonOOMKilled)
 	if len(oomEvents) != 2 {
 		t.Errorf("GetByReason(OOMKilled) returned %d, want 2", len(oomEvents))
+	}
+}
+
+func TestK8sWatcher_StartStopImmediately(t *testing.T) {
+	//nolint:staticcheck // NewSimpleClientset used for testing
+	client := fake.NewSimpleClientset()
+
+	w, err := NewK8sWatcher(client, WatcherConfig{
+		NodeName:   "gpu-node-01",
+		BufferSize: 100,
+	})
+	if err != nil {
+		t.Fatalf("NewK8sWatcher() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// Immediately stop - should not hang or leak goroutines
+	w.Stop()
+
+	if w.IsRunning() {
+		t.Error("IsRunning() = true after Stop()")
+	}
+
+	// Wait for goroutines to finish
+	w.Wait()
+
+	// IsSynced should be false since we stopped before sync completed
+	if w.IsSynced() {
+		t.Error("IsSynced() should be false after immediate stop")
 	}
 }
 

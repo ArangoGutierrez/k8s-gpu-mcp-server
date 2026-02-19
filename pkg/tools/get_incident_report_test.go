@@ -20,7 +20,10 @@ import (
 func TestGetIncidentReportHandler_Handle_NeitherIDNorPod(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{}
@@ -38,7 +41,10 @@ func TestGetIncidentReportHandler_Handle_NeitherIDNorPod(t *testing.T) {
 func TestGetIncidentReportHandler_Handle_InvalidIncidentID(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -58,7 +64,10 @@ func TestGetIncidentReportHandler_Handle_InvalidIncidentID(t *testing.T) {
 func TestGetIncidentReportHandler_Handle_PodNotFound(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -79,7 +88,10 @@ func TestGetIncidentReportHandler_Handle_PodNotFound(t *testing.T) {
 func TestGetIncidentReportHandler_Handle_ByIncidentID(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	// Pre-cache an incident
 	incident := &events.CorrelatedIncident{
@@ -157,7 +169,10 @@ func TestGetIncidentReportHandler_Handle_ByPodName(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -202,7 +217,10 @@ func TestGetIncidentReportHandler_Handle_PodNotFailed(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -221,7 +239,10 @@ func TestGetIncidentReportHandler_Handle_PodNotFailed(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_parseReportArgs_Defaults(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -247,7 +268,10 @@ func TestGetIncidentReportHandler_parseReportArgs_Defaults(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_parseReportArgs_CustomFlags(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	request := mcp.CallToolRequest{}
 	request.Params.Arguments = map[string]any{
@@ -271,7 +295,10 @@ func TestGetIncidentReportHandler_parseReportArgs_CustomFlags(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_parseReportArgs_Validation(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -339,7 +366,10 @@ func TestGetIncidentReportTool(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_CacheIncident(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	incident := &events.CorrelatedIncident{
 		ID:        "cache-test-id",
@@ -360,7 +390,10 @@ func TestGetIncidentReportHandler_CacheIncident(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_CacheIncident_Nil(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	// Should not panic
 	handler.CacheIncident(nil)
@@ -370,9 +403,12 @@ func TestGetIncidentReportHandler_CacheIncident_Nil(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_lookupByID_NotFound(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
-	_, err := handler.lookupByID("nonexistent")
+	_, err = handler.lookupByID("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent incident")
 	}
@@ -387,43 +423,58 @@ func TestGetIncidentReportHandler_WithOptions(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	t.Run("WithIncidentNamespace sets custom namespace", func(t *testing.T) {
-		handler := NewGetIncidentReportHandler(clientset,
+		handler, err := NewGetIncidentReportHandler(clientset,
 			WithIncidentNamespace("custom-ns"),
 		)
+		if err != nil {
+			t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+		}
 		if handler.namespace != "custom-ns" {
 			t.Errorf("expected namespace 'custom-ns', got %s", handler.namespace)
 		}
 	})
 
 	t.Run("WithIncidentNamespace empty does not override default", func(t *testing.T) {
-		handler := NewGetIncidentReportHandler(clientset,
+		handler, err := NewGetIncidentReportHandler(clientset,
 			WithIncidentNamespace(""),
 		)
+		if err != nil {
+			t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+		}
 		if handler.namespace != "default" {
 			t.Errorf("expected namespace 'default', got %s", handler.namespace)
 		}
 	})
 
 	t.Run("WithIncidentCorrelator sets correlator", func(t *testing.T) {
-		handler := NewGetIncidentReportHandler(clientset,
+		handler, err := NewGetIncidentReportHandler(clientset,
 			WithIncidentCorrelator(nil),
 		)
+		if err != nil {
+			t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+		}
 		if handler.correlator != nil {
 			t.Error("expected correlator to be nil")
 		}
 	})
 
 	t.Run("WithIncidentRecorder sets recorder", func(t *testing.T) {
-		handler := NewGetIncidentReportHandler(clientset,
+		handler, err := NewGetIncidentReportHandler(clientset,
 			WithIncidentRecorder(nil),
 		)
+		if err != nil {
+			t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+		}
 		if handler.recorder != nil {
 			t.Error("expected recorder to be nil")
 		}
 	})
 
 	t.Run("default values when no options", func(t *testing.T) {
-		handler := NewGetIncidentReportHandler(clientset)
+		handler, err := NewGetIncidentReportHandler(clientset)
+		if err != nil {
+			t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+		}
 
 		if handler.namespace != "default" {
 			t.Errorf("expected default namespace 'default', got %s", handler.namespace)
@@ -642,7 +693,10 @@ func TestCalculateAnalysisDuration(t *testing.T) {
 }
 
 func TestGetIncidentReportHandler_extractRawEvents(t *testing.T) {
-	handler := NewGetIncidentReportHandler(nil)
+	handler, err := NewGetIncidentReportHandler(nil)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	incident := &events.CorrelatedIncident{
 		Trigger: events.Event{
@@ -688,7 +742,10 @@ func TestGetIncidentReportHandler_Handle_DefaultNamespace(t *testing.T) {
 
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset(pod)
-	handler := NewGetIncidentReportHandler(clientset)
+	handler, err := NewGetIncidentReportHandler(clientset)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	// Don't provide namespace - should use default
 	request := mcp.CallToolRequest{}
@@ -709,9 +766,12 @@ func TestGetIncidentReportHandler_Handle_DefaultNamespace(t *testing.T) {
 func TestGetIncidentReportHandler_Handle_NilAnalyzer(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewGetIncidentReportHandler(clientset,
+	handler, err := NewGetIncidentReportHandler(clientset,
 		WithIncidentAnalyzer(nil), // Force nil
 	)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	// Pre-cache an incident to bypass lookup
 	incident := &events.CorrelatedIncident{
@@ -750,9 +810,12 @@ func TestGetIncidentReportHandler_Handle_NilAnalyzer(t *testing.T) {
 func TestGetIncidentReportHandler_Handle_NilExplainer(t *testing.T) {
 	//nolint:staticcheck // NewSimpleClientset used for testing
 	clientset := fake.NewSimpleClientset()
-	handler := NewGetIncidentReportHandler(clientset,
+	handler, err := NewGetIncidentReportHandler(clientset,
 		WithIncidentExplainer(nil), // Force nil
 	)
+	if err != nil {
+		t.Fatalf("NewGetIncidentReportHandler error: %v", err)
+	}
 
 	// Pre-cache an incident to bypass lookup
 	incident := &events.CorrelatedIncident{
