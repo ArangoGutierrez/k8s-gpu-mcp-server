@@ -35,6 +35,18 @@ spec:
       {{- if gt (int .Values.gateway.replicas) 1 }}
       affinity:
         podAntiAffinity:
+          {{- if eq (default "soft" .Values.gateway.antiAffinity) "hard" }}
+          # Hard anti-affinity: strictly one gateway pod per node.
+          # Pods will be unschedulable if there are fewer nodes than replicas.
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "k8s-gpu-mcp-server.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: gateway
+              topologyKey: kubernetes.io/hostname
+          {{- else }}
+          # Soft anti-affinity (default): best-effort pod spreading across nodes.
+          # Pods may co-locate if no other node is available.
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:
@@ -43,6 +55,7 @@ spec:
                     {{- include "k8s-gpu-mcp-server.selectorLabels" . | nindent 20 }}
                     app.kubernetes.io/component: gateway
                 topologyKey: kubernetes.io/hostname
+          {{- end }}
       {{- end }}
       containers:
       - name: gateway
