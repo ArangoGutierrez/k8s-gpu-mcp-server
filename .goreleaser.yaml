@@ -18,9 +18,15 @@ builds:
     binary: k8s-gpu-mcp-server-{{ .Os }}-{{ .Arch }}
     no_unique_dist_dir: true
     env:
-      # CGO disabled for cross-compilation
-      # Real NVML requires CGO but npm/PyPI wrappers need static binaries
-      # Users on GPU hosts can build from source with CGO_ENABLED=1
+      # CGO_ENABLED=0: Required for cross-compilation of static binaries distributed
+      # via GitHub releases and npm. This means these binaries CANNOT load the real
+      # NVML shared library (libnvidia-ml.so) — they will use the unimplemented/mock
+      # NVML fallback and rely on Kubernetes API data only.
+      #
+      # For full NVML support (direct GPU queries), use either:
+      #   1. The container image (ghcr.io/arangogutierrez/k8s-gpu-mcp-server) which
+      #      is built with CGO_ENABLED=1 and includes NVML bindings.
+      #   2. Build from source with CGO_ENABLED=1 on a host with CUDA toolkit installed.
       - CGO_ENABLED=0
     goos:
       - linux
@@ -73,6 +79,26 @@ changelog:
       order: 3
     - title: 'Other'
       order: 999
+
+# Binary signing with cosign (keyless via Sigstore/Fulcio).
+# Requires cosign to be installed in the release environment.
+# GitHub Actions: use sigstore/cosign-installer action before goreleaser.
+# Signing is skipped gracefully if cosign is not available.
+signs:
+  - cmd: cosign
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+    artifacts: checksum
+
+# Generate CycloneDX SBOMs for release artifacts.
+# Requires syft to be installed in the release environment.
+# GitHub Actions: use anchore/sbom-action/download-syft action before goreleaser.
+sboms:
+  - artifacts: archive
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
 
 release:
   github:
