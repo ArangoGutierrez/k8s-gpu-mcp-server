@@ -83,7 +83,7 @@ changelog:
 # Binary signing with cosign (keyless via Sigstore/Fulcio).
 # Requires cosign to be installed in the release environment.
 # GitHub Actions: use sigstore/cosign-installer action before goreleaser.
-# Signing is skipped gracefully if cosign is not available.
+# goreleaser will FAIL if cosign is not installed — it is not optional.
 signs:
   - cmd: cosign
     args:
