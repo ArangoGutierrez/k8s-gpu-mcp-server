@@ -12,8 +12,8 @@ import (
 
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/k8s"
 	"github.com/mark3labs/mcp-go/mcp"
-	corev1 "k8s.io/api/core/v1"
 	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -25,9 +25,9 @@ const DefaultRateBurst = 20
 
 // ProxyHandler forwards tool calls to node agents and aggregates responses.
 type ProxyHandler struct {
-	router  *Router
+	router   *Router
 	toolName string
-	limiter *rate.Limiter
+	limiter  *rate.Limiter
 }
 
 // ProxyOption configures a ProxyHandler.
