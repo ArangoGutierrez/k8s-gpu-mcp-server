@@ -62,7 +62,10 @@ type SeveritySummary struct {
 
 // AnalyzeXIDResponse is the structured response from the analyze_xid_errors
 // tool.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type AnalyzeXIDResponse struct {
+	APIVersion     string             `json:"api_version"`
 	Status         string             `json:"status"`
 	ErrorCount     int                `json:"error_count"`
 	Errors         []EnrichedXIDError `json:"errors"`
@@ -97,6 +100,7 @@ func (h *AnalyzeXIDHandler) Handle(
 	// If no errors found, return success immediately
 	if len(events) == 0 {
 		response := AnalyzeXIDResponse{
+			APIVersion:     APIVersion,
 			Status:         "ok",
 			ErrorCount:     0,
 			Errors:         []EnrichedXIDError{},
@@ -125,6 +129,7 @@ func (h *AnalyzeXIDHandler) Handle(
 
 	// Build response
 	response := AnalyzeXIDResponse{
+		APIVersion:     APIVersion,
 		Status:         status,
 		ErrorCount:     len(enrichedErrors),
 		Errors:         enrichedErrors,

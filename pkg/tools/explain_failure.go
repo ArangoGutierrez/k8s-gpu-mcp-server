@@ -228,7 +228,10 @@ func (h *ExplainFailureHandler) buildMinimalIncident(
 }
 
 // ExplainFailureResponse is the structured response from explain_failure.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type ExplainFailureResponse struct {
+	APIVersion      string                      `json:"api_version"`
 	Pod             PodSummary                  `json:"pod"`
 	GPU             *GPUSummary                 `json:"gpu,omitempty"`
 	RootCause       RootCauseSummary            `json:"root_cause"`
@@ -275,6 +278,7 @@ func (h *ExplainFailureHandler) buildResponse(
 	explanation string,
 ) ExplainFailureResponse {
 	resp := ExplainFailureResponse{
+		APIVersion: APIVersion,
 		Pod: PodSummary{
 			Name:      failure.Pod.Name,
 			Namespace: failure.Pod.Namespace,

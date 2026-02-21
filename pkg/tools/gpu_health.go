@@ -26,7 +26,10 @@ func NewGPUHealthHandler(nvmlClient nvml.Interface) *GPUHealthHandler {
 }
 
 // GPUHealthResponse is the top-level response structure for GPU health status.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type GPUHealthResponse struct {
+	APIVersion     string            `json:"api_version"`
 	Status         string            `json:"status"`
 	OverallScore   int               `json:"overall_score"`
 	DeviceCount    int               `json:"device_count"`
@@ -177,6 +180,7 @@ func (h *GPUHealthHandler) Handle(
 
 	// Calculate overall status
 	response := h.calculateOverallHealth(gpus)
+	response.APIVersion = APIVersion
 
 	// Populate capability fields
 	if caps != nil {

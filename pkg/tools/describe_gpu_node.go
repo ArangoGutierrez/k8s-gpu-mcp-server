@@ -35,8 +35,11 @@ func NewDescribeGPUNodeHandler(
 }
 
 // GPUNodeDescription represents the full node description.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type GPUNodeDescription struct {
-	Status  string           `json:"status"`
+	APIVersion string           `json:"api_version"`
+	Status     string           `json:"status"`
 	Node    NodeInfo         `json:"node"`
 	Driver  DriverInfo       `json:"driver,omitempty"`
 	GPUs    []GPUDescription `json:"gpus,omitempty"`
@@ -252,8 +255,9 @@ func (h *DescribeGPUNodeHandler) Handle(
 
 	// Create response
 	response := GPUNodeDescription{
-		Status:  status,
-		Node:    nodeInfo,
+		APIVersion: APIVersion,
+		Status:     status,
+		Node:       nodeInfo,
 		Driver:  driverInfo,
 		GPUs:    gpus,
 		Pods:    pods,

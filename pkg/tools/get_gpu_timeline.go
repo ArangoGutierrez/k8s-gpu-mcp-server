@@ -62,7 +62,10 @@ func NewGPUTimelineHandler(
 }
 
 // GPUTimelineResponse is the response from get_gpu_timeline.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type GPUTimelineResponse struct {
+	APIVersion     string          `json:"api_version"`
 	GPUUUID        string          `json:"gpu_uuid"`
 	GPUIndex       int             `json:"gpu_index"`
 	GPUName        string          `json:"gpu_name,omitempty"`
@@ -76,8 +79,11 @@ type GPUTimelineResponse struct {
 }
 
 // MultiGPUTimelineResponse wraps multiple GPU timelines.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type MultiGPUTimelineResponse struct {
-	GPUCount  int                   `json:"gpu_count"`
+	APIVersion string                `json:"api_version"`
+	GPUCount   int                   `json:"gpu_count"`
 	Duration  string                `json:"duration"`
 	Timelines []GPUTimelineResponse `json:"timelines"`
 	Warning   string                `json:"warning,omitempty"`
@@ -333,8 +339,9 @@ func (h *GPUTimelineHandler) handleAllGPUs(
 	}
 
 	multiResp := MultiGPUTimelineResponse{
-		GPUCount:  len(allTimelines),
-		Duration:  args.duration.String(),
+		APIVersion: APIVersion,
+		GPUCount:   len(allTimelines),
+		Duration:   args.duration.String(),
 		Timelines: make([]GPUTimelineResponse, 0, len(allTimelines)),
 	}
 
@@ -368,6 +375,7 @@ func (h *GPUTimelineHandler) buildResponse(
 	args *timelineArgs,
 ) GPUTimelineResponse {
 	resp := GPUTimelineResponse{
+		APIVersion:  APIVersion,
 		GPUUUID:     gpuUUID,
 		Duration:    args.duration.String(),
 		SampleCount: len(snapshots),
