@@ -227,7 +227,7 @@ func TestHTTPServer_TLS_HealthzEndpoint(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close() // Release so the server can bind
+	_ = ln.Close() // Release so the server can bind
 
 	mcpServer := server.NewMCPServer("test", "1.0.0")
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
@@ -263,7 +263,7 @@ func TestHTTPServer_TLS_HealthzEndpoint(t *testing.T) {
 
 	resp, err := tlsClient.Get(fmt.Sprintf("https://%s/healthz", addr))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, resp.TLS != nil, "response should be over TLS")
