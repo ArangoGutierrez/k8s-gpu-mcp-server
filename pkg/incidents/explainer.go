@@ -160,11 +160,11 @@ func (e *Explainer) GenerateTimeline(incident *events.CorrelatedIncident) string
 	buf.WriteString("## Timeline\n\n")
 
 	for _, entry := range incident.Timeline {
-		buf.WriteString(fmt.Sprintf("- %s (%s) - %s\n",
+		fmt.Fprintf(&buf, "- %s (%s) - %s\n",
 			entry.Timestamp.Format("15:04:05"),
 			entry.RelativeTime,
 			entry.Description,
-		))
+		)
 	}
 
 	return buf.String()
