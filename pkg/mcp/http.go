@@ -5,9 +5,11 @@ package mcp
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -23,12 +25,13 @@ type NVMLChecker interface {
 
 // HTTPServer wraps the MCP server with HTTP transport.
 type HTTPServer struct {
-	mcpServer   *server.MCPServer
-	httpServer  *http.Server
-	addr        string
-	version     string
-	ready       chan struct{}
-	nvmlChecker NVMLChecker
+	mcpServer        *server.MCPServer
+	httpServer       *http.Server
+	addr             string
+	version          string
+	ready            chan struct{}
+	nvmlChecker      NVMLChecker
+	metricsAuthToken string
 }
 
 // NewHTTPServer creates an HTTP transport server.
@@ -44,6 +47,13 @@ func NewHTTPServer(mcpServer *server.MCPServer, addr, version string) *HTTPServe
 // SetNVMLChecker sets the optional NVML checker for startup warnings.
 func (h *HTTPServer) SetNVMLChecker(checker NVMLChecker) {
 	h.nvmlChecker = checker
+}
+
+// SetMetricsAuthToken sets the bearer token required for /metrics access.
+// When empty (default), the metrics endpoint is unauthenticated for backward
+// compatibility. When set, requests must include "Authorization: Bearer <token>".
+func (h *HTTPServer) SetMetricsAuthToken(token string) {
+	h.metricsAuthToken = token
 }
 
 // ListenAndServe starts the HTTP server.
@@ -72,8 +82,12 @@ func (h *HTTPServer) ListenAndServe(ctx context.Context) error {
 	// Version endpoint
 	mux.HandleFunc("/version", h.handleVersion)
 
-	// Prometheus metrics endpoint
-	mux.Handle("/metrics", promhttp.Handler())
+	// Prometheus metrics endpoint (optionally protected by bearer token)
+	metricsHandler := promhttp.Handler()
+	if h.metricsAuthToken != "" {
+		metricsHandler = h.requireBearerAuth(metricsHandler)
+	}
+	mux.Handle("/metrics", metricsHandler)
 
 	// Create server before starting goroutine to avoid race condition.
 	// WriteTimeout (90s) must exceed exec timeout (60s) plus response
@@ -189,4 +203,33 @@ func (h *HTTPServer) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		klog.ErrorS(err, "failed to encode version response")
 	}
+}
+
+// requireBearerAuth wraps a handler with bearer token authentication.
+// Returns 401 Unauthorized if the token is missing or does not match.
+func (h *HTTPServer) requireBearerAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"authorization required"}`, http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if token == auth {
+			// No "Bearer " prefix found
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"invalid authorization scheme"}`, http.StatusUnauthorized)
+			return
+		}
+
+		if subtle.ConstantTimeCompare([]byte(token), []byte(h.metricsAuthToken)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }

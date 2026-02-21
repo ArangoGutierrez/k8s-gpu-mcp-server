@@ -13,13 +13,32 @@ import (
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/k8s"
 	"github.com/mark3labs/mcp-go/mcp"
 	corev1 "k8s.io/api/core/v1"
+	"golang.org/x/time/rate"
 	"k8s.io/klog/v2"
 )
 
+// DefaultRateLimit is the default number of tool call requests per second.
+const DefaultRateLimit = 100
+
+// DefaultRateBurst is the default burst size for the rate limiter.
+const DefaultRateBurst = 20
+
 // ProxyHandler forwards tool calls to node agents and aggregates responses.
 type ProxyHandler struct {
-	router   *Router
+	router  *Router
 	toolName string
+	limiter *rate.Limiter
+}
+
+// ProxyOption configures a ProxyHandler.
+type ProxyOption func(*ProxyHandler)
+
+// WithRateLimit sets the rate limiter for the proxy handler.
+// rps is the requests per second and burst is the maximum burst size.
+func WithRateLimit(rps float64, burst int) ProxyOption {
+	return func(p *ProxyHandler) {
+		p.limiter = rate.NewLimiter(rate.Limit(rps), burst)
+	}
 }
 
 // NewProxyHandler creates a handler that proxies a specific tool to agents.
@@ -31,7 +50,26 @@ func NewProxyHandler(
 	return &ProxyHandler{
 		router:   NewRouter(k8sClient, opts...),
 		toolName: toolName,
+		limiter:  rate.NewLimiter(DefaultRateLimit, DefaultRateBurst),
 	}
+}
+
+// NewProxyHandlerWithOptions creates a handler with proxy-level options.
+func NewProxyHandlerWithOptions(
+	k8sClient *k8s.Client,
+	toolName string,
+	proxyOpts []ProxyOption,
+	routerOpts ...RouterOption,
+) *ProxyHandler {
+	p := &ProxyHandler{
+		router:   NewRouter(k8sClient, routerOpts...),
+		toolName: toolName,
+		limiter:  rate.NewLimiter(DefaultRateLimit, DefaultRateBurst),
+	}
+	for _, opt := range proxyOpts {
+		opt(p)
+	}
+	return p
 }
 
 // Handle proxies the tool call to all node agents and aggregates results.
@@ -50,6 +88,15 @@ func (p *ProxyHandler) Handle(
 		"tool", p.toolName,
 		"routingMode", p.router.RoutingMode(),
 		"correlationID", correlationID)
+
+	// Check rate limit
+	if p.limiter != nil && !p.limiter.Allow() {
+		klog.V(2).InfoS("rate limit exceeded",
+			"tool", p.toolName, "correlationID", correlationID)
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"rate limit exceeded for tool %q: too many requests, retry later",
+			p.toolName)), nil
+	}
 
 	// Extract include_k8s_metadata parameter (default: true for gateway mode)
 	includeK8sMetadata := true

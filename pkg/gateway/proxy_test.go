@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/ArangoGutierrez/k8s-gpu-mcp-server/pkg/k8s"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -815,4 +817,69 @@ func TestAggregateGPUInventory_WithoutK8sMetadata(t *testing.T) {
 
 	nodeData := nodes[0].(map[string]interface{})
 	assert.NotContains(t, nodeData, "kubernetes")
+}
+
+func TestProxyHandler_RateLimitExceeded(t *testing.T) {
+	handler := &ProxyHandler{
+		toolName: "test_tool",
+		router:   &Router{routingMode: RoutingModeHTTP},
+	}
+	// Set a very restrictive rate limit: 1 request, burst 1
+	handler.limiter = rate.NewLimiter(1, 1)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "test_tool"
+
+	// First request should succeed (but will fail later in routing — that's ok)
+	// We just need to verify the limiter lets the first one through
+	// and blocks subsequent ones.
+	// Exhaust the burst
+	_ = handler.limiter.Allow()
+
+	// Second request should be rate limited
+	result, err := handler.Handle(context.Background(), req)
+	require.NoError(t, err)
+
+	// Parse the result to check for rate limit error
+	jsonBytes, marshalErr := json.Marshal(result)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(jsonBytes), "rate limit exceeded")
+}
+
+func TestProxyHandler_RateLimitDisabled(t *testing.T) {
+	//nolint:staticcheck // NewSimpleClientset used for testing
+	clientset := fake.NewSimpleClientset()
+	k8sClient := k8s.NewClientWithConfig(clientset, nil, "default")
+
+	handler := &ProxyHandler{
+		toolName: "test_tool",
+		router:   NewRouter(k8sClient),
+		limiter:  nil, // disabled
+	}
+
+	// With nil limiter, should not panic and should proceed to routing
+	// (it will fail in routing since there are no GPU nodes)
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "test_tool"
+
+	result, err := handler.Handle(context.Background(), req)
+	require.NoError(t, err)
+	// Should get a routing error, not a rate limit error
+	jsonBytes, marshalErr := json.Marshal(result)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(jsonBytes), "rate limit exceeded")
+}
+
+func TestWithRateLimit(t *testing.T) {
+	handler := &ProxyHandler{
+		toolName: "test_tool",
+		router:   &Router{},
+		limiter:  rate.NewLimiter(DefaultRateLimit, DefaultRateBurst),
+	}
+
+	opt := WithRateLimit(50, 10)
+	opt(handler)
+
+	assert.Equal(t, rate.Limit(50), handler.limiter.Limit())
+	assert.Equal(t, 10, handler.limiter.Burst())
 }

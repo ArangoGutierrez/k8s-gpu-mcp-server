@@ -111,16 +111,17 @@ func (h *PodGPUAllocationHandler) Handle(
 
 	pods, err := h.clientset.CoreV1().Pods(namespace).List(ctx, listOpts)
 	if err != nil {
-		klog.ErrorS(err, "failed to list pods",
+		klog.V(2).ErrorS(err, "failed to list pods",
+			"node", nodeName, "namespace", namespace,
 			"hint", "Agent may lack RBAC permissions. Apply deployment/rbac/agent-rbac-readonly.yaml")
-		// Return structured error with troubleshooting hint
+		// Return sanitized error to client — avoid leaking internal K8s API details
 		response := PodGPUAllocationResponse{
 			Status:   "error",
 			NodeName: nodeName,
 			Pods:     []PodGPUAllocation{},
 			Summary:  AllocationSummary{},
-			Error:    fmt.Sprintf("failed to list pods: %s", err),
-			Hint:     "Agent may lack RBAC permissions. Apply deployment/rbac/agent-rbac-readonly.yaml",
+			Error:    "internal error: failed to list pods on node",
+			Hint:     "Check agent RBAC permissions. See server logs for details.",
 		}
 		jsonBytes, marshalErr := json.MarshalIndent(response, "", "  ")
 		if marshalErr != nil {
@@ -140,9 +141,9 @@ func (h *PodGPUAllocationHandler) Handle(
 		// Check for context cancellation
 		select {
 		case <-ctx.Done():
-			klog.InfoS("context cancelled during pod enumeration")
-			return mcp.NewToolResultError(
-				fmt.Sprintf("operation cancelled: %s", ctx.Err())), nil
+			klog.V(2).InfoS("context cancelled during pod enumeration",
+				"node", nodeName, "error", ctx.Err())
+			return mcp.NewToolResultError("operation cancelled"), nil
 		default:
 		}
 
@@ -174,9 +175,9 @@ func (h *PodGPUAllocationHandler) Handle(
 	// Marshal to JSON
 	jsonBytes, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
-		klog.ErrorS(err, "failed to marshal response")
+		klog.ErrorS(err, "failed to marshal response", "node", nodeName)
 		return mcp.NewToolResultError(
-			fmt.Sprintf("failed to marshal response: %s", err)), nil
+			"internal error: failed to format response"), nil
 	}
 
 	klog.InfoS("get_pod_gpu_allocation completed",

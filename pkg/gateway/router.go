@@ -7,8 +7,11 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"sync"
 	"time"
 
@@ -190,6 +193,24 @@ func (r *Router) routeToGPUNode(
 	return response, nil
 }
 
+// redactEndpoint replaces the host IP in an endpoint URL with a truncated
+// SHA-256 hash (first 8 hex chars) for safe logging. This prevents internal
+// pod IPs from leaking into non-debug logs while preserving enough
+// information to correlate entries. Returns the original endpoint on parse error.
+func redactEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "<redacted>"
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		hash := sha256.Sum256([]byte(host))
+		u.Host = fmt.Sprintf("ip-%x:%s", hash[:4], u.Port())
+		return u.String()
+	}
+	return endpoint
+}
+
 // routeViaHTTP sends request via HTTP to agent pod.
 func (r *Router) routeViaHTTP(
 	ctx context.Context,
@@ -208,19 +229,33 @@ func (r *Router) routeViaHTTP(
 	response, err := r.httpClient.CallMCP(ctx, endpoint, mcpRequest)
 	duration := time.Since(startTime)
 
+	// Use redacted endpoint in non-debug logs (V(0)-V(2)) to avoid
+	// leaking internal pod IPs. Full endpoint is logged at V(3)+.
+	safeEndpoint := redactEndpoint(endpoint)
+
 	// Record metrics
 	status := "success"
 	if err != nil {
 		status = "error"
 		klog.ErrorS(err, "HTTP request failed",
-			"requestID", requestID, "node", node.Name, "endpoint", endpoint,
+			"requestID", requestID, "node", node.Name,
+			"endpoint", safeEndpoint,
+			"durationSeconds", duration.Seconds())
+		klog.V(3).InfoS("HTTP request failed (debug)",
+			"requestID", requestID, "node", node.Name,
+			"endpoint", endpoint,
 			"durationSeconds", duration.Seconds())
 		metrics.RecordGatewayRequest(node.Name, "http", status, duration.Seconds())
 		return nil, fmt.Errorf("HTTP request failed on node %s: %w", node.Name, err)
 	}
 
 	klog.InfoS("HTTP request completed",
-		"requestID", requestID, "node", node.Name, "endpoint", endpoint,
+		"requestID", requestID, "node", node.Name,
+		"endpoint", safeEndpoint,
+		"durationSeconds", duration.Seconds(), "responseBytes", len(response))
+	klog.V(3).InfoS("HTTP request completed (debug)",
+		"requestID", requestID, "node", node.Name,
+		"endpoint", endpoint,
 		"durationSeconds", duration.Seconds(), "responseBytes", len(response))
 
 	metrics.RecordGatewayRequest(node.Name, "http", status, duration.Seconds())

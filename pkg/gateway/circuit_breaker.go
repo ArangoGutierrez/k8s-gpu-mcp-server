@@ -21,6 +21,23 @@ const (
 )
 
 // CircuitBreaker tracks node health and prevents requests to failing nodes.
+//
+// Usage contract (caller must follow this sequence per request):
+//
+//  1. Call Allow(node) to check if the request should proceed.
+//     If false, the circuit is open — do not send the request.
+//  2. Send the request to the node.
+//  3. On success: call RecordSuccess(node).
+//     On failure: call RecordFailure(node).
+//
+// Violating this ordering (e.g., calling RecordFailure without Allow, or calling
+// Allow without a subsequent Record*) will not cause panics, but will produce
+// inaccurate circuit state. In particular, skipping Allow means the circuit
+// breaker cannot transition from Open to HalfOpen on timeout expiry.
+//
+// New nodes start in CircuitClosed state with zero failures. The zero-value of
+// CircuitState (0) is CircuitClosed, so map lookups for unknown nodes
+// return the correct default.
 type CircuitBreaker struct {
 	mu            sync.RWMutex
 	failures      map[string]int
@@ -53,7 +70,9 @@ func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 	}
 }
 
-// NewCircuitBreaker creates a new circuit breaker.
+// NewCircuitBreaker creates a new circuit breaker with empty node maps.
+// All nodes begin in CircuitClosed state (the zero value) with zero failures.
+// Node entries are created lazily on the first Allow or Record* call.
 func NewCircuitBreaker(cfg CircuitBreakerConfig) *CircuitBreaker {
 	return &CircuitBreaker{
 		failures:      make(map[string]int),
@@ -67,6 +86,8 @@ func NewCircuitBreaker(cfg CircuitBreakerConfig) *CircuitBreaker {
 
 // Allow checks if a request to the given node should be allowed.
 // Returns true if the circuit is closed or half-open.
+// Must be called before sending each request. See CircuitBreaker doc for
+// the expected Allow -> request -> Record* sequence.
 func (cb *CircuitBreaker) Allow(node string) bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -94,6 +115,7 @@ func (cb *CircuitBreaker) Allow(node string) bool {
 
 // RecordSuccess records a successful request to a node.
 // Resets the failure count and closes the circuit.
+// Must be called after Allow returned true and the request succeeded.
 func (cb *CircuitBreaker) RecordSuccess(node string) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -105,6 +127,7 @@ func (cb *CircuitBreaker) RecordSuccess(node string) {
 
 // RecordFailure records a failed request to a node.
 // Opens the circuit if threshold is reached.
+// Must be called after Allow returned true and the request failed.
 func (cb *CircuitBreaker) RecordFailure(node string) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

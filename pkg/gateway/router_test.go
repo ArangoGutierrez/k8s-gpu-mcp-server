@@ -290,3 +290,54 @@ func TestRouterRouteToAllNodes_ContextCancelled(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, results, "no nodes should be processed when context is cancelled")
 }
+
+func TestRedactEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		wantIP   bool // if true, the raw IP should NOT appear in output
+	}{
+		{
+			name:     "IPv4 endpoint",
+			endpoint: "http://10.244.1.5:8080",
+			wantIP:   true,
+		},
+		{
+			name:     "IPv6 endpoint",
+			endpoint: "http://[fd00::1]:8080",
+			wantIP:   true,
+		},
+		{
+			name:     "DNS endpoint is not redacted",
+			endpoint: "http://pod-1.svc.cluster.local:8080",
+			wantIP:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := redactEndpoint(tt.endpoint)
+			if tt.wantIP {
+				// Should not contain the original IP
+				assert.NotContains(t, result, "10.244.1.5")
+				assert.NotContains(t, result, "fd00::1")
+				// Should contain the hash prefix pattern
+				assert.Contains(t, result, "ip-")
+			} else {
+				// DNS names should pass through unchanged
+				assert.Equal(t, tt.endpoint, result)
+			}
+		})
+	}
+}
+
+func TestRedactEndpoint_Deterministic(t *testing.T) {
+	// Same input should produce same hash
+	e1 := redactEndpoint("http://10.244.1.5:8080")
+	e2 := redactEndpoint("http://10.244.1.5:8080")
+	assert.Equal(t, e1, e2)
+
+	// Different IPs should produce different hashes
+	e3 := redactEndpoint("http://10.244.1.6:8080")
+	assert.NotEqual(t, e1, e3)
+}
