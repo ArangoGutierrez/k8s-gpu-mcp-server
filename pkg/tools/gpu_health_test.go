@@ -29,11 +29,6 @@ const (
 	// testTempElevatedMargin is the degrees below slowdown that triggers "elevated".
 	testTempElevatedMargin uint32 = 10
 
-	// Memory usage thresholds (from gpu_health.go lines 344-349).
-	memCriticalPercent = 95.0 // >= 95% used
-	memHighPercent     = 90.0 // >= 90% used
-	memElevatedPercent = 80.0 // >= 80% used
-
 	// Power usage thresholds (from gpu_health.go lines 409-416).
 	powerHighPercent     = 95.0 // >= 95% of limit
 	powerElevatedPercent = 80.0 // >= 80% of limit
