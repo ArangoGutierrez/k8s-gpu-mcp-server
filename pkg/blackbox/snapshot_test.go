@@ -68,10 +68,10 @@ func TestGPUSnapshot_IsThrottled(t *testing.T) {
 
 func TestGPUSnapshot_HasECCErrors(t *testing.T) {
 	tests := []struct {
-		name           string
-		correctable    uint64
-		uncorrectable  uint64
-		wantHasErrors  bool
+		name          string
+		correctable   uint64
+		uncorrectable uint64
+		wantHasErrors bool
 	}{
 		{
 			name:          "no errors",
