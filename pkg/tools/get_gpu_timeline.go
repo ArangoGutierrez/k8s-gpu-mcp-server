@@ -84,9 +84,9 @@ type GPUTimelineResponse struct {
 type MultiGPUTimelineResponse struct {
 	APIVersion string                `json:"api_version"`
 	GPUCount   int                   `json:"gpu_count"`
-	Duration  string                `json:"duration"`
-	Timelines []GPUTimelineResponse `json:"timelines"`
-	Warning   string                `json:"warning,omitempty"`
+	Duration   string                `json:"duration"`
+	Timelines  []GPUTimelineResponse `json:"timelines"`
+	Warning    string                `json:"warning,omitempty"`
 }
 
 // DataPoint represents a single GPU telemetry sample.
@@ -342,7 +342,7 @@ func (h *GPUTimelineHandler) handleAllGPUs(
 		APIVersion: APIVersion,
 		GPUCount:   len(allTimelines),
 		Duration:   args.duration.String(),
-		Timelines: make([]GPUTimelineResponse, 0, len(allTimelines)),
+		Timelines:  make([]GPUTimelineResponse, 0, len(allTimelines)),
 	}
 
 	since := time.Now().Add(-args.duration)

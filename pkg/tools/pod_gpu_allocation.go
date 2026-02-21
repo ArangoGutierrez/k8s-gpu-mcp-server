@@ -59,11 +59,11 @@ type ContainerGPUAllocation struct {
 type PodGPUAllocationResponse struct {
 	APIVersion string             `json:"api_version"`
 	Status     string             `json:"status"`
-	NodeName string             `json:"node_name"`
-	Pods     []PodGPUAllocation `json:"pods"`
-	Summary  AllocationSummary  `json:"summary"`
-	Error    string             `json:"error,omitempty"`
-	Hint     string             `json:"hint,omitempty"`
+	NodeName   string             `json:"node_name"`
+	Pods       []PodGPUAllocation `json:"pods"`
+	Summary    AllocationSummary  `json:"summary"`
+	Error      string             `json:"error,omitempty"`
+	Hint       string             `json:"hint,omitempty"`
 }
 
 // AllocationSummary provides summary statistics for GPU allocations.

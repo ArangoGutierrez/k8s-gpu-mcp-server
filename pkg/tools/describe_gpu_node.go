@@ -40,11 +40,11 @@ func NewDescribeGPUNodeHandler(
 type GPUNodeDescription struct {
 	APIVersion string           `json:"api_version"`
 	Status     string           `json:"status"`
-	Node    NodeInfo         `json:"node"`
-	Driver  DriverInfo       `json:"driver,omitempty"`
-	GPUs    []GPUDescription `json:"gpus,omitempty"`
-	Pods    []PodGPUSummary  `json:"pods"`
-	Summary GPUNodeSummary   `json:"summary"`
+	Node       NodeInfo         `json:"node"`
+	Driver     DriverInfo       `json:"driver,omitempty"`
+	GPUs       []GPUDescription `json:"gpus,omitempty"`
+	Pods       []PodGPUSummary  `json:"pods"`
+	Summary    GPUNodeSummary   `json:"summary"`
 }
 
 // NodeInfoPartial is used when K8s API access fails but NVML data is available.
@@ -258,10 +258,10 @@ func (h *DescribeGPUNodeHandler) Handle(
 		APIVersion: APIVersion,
 		Status:     status,
 		Node:       nodeInfo,
-		Driver:  driverInfo,
-		GPUs:    gpus,
-		Pods:    pods,
-		Summary: summary,
+		Driver:     driverInfo,
+		GPUs:       gpus,
+		Pods:       pods,
+		Summary:    summary,
 	}
 
 	// Marshal to JSON
