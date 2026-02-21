@@ -35,9 +35,9 @@ const (
 	memElevatedPercent = 80.0 // >= 80% used
 
 	// Power usage thresholds (from gpu_health.go lines 409-416).
-	powerHighPercent     = 95.0  // >= 95% of limit
-	powerElevatedPercent = 80.0  // >= 80% of limit
-	powerOverLimitMult   = 1.10  // > 100% of limit
+	powerHighPercent     = 95.0 // >= 95% of limit
+	powerElevatedPercent = 80.0 // >= 80% of limit
+	powerOverLimitMult   = 1.10 // > 100% of limit
 
 	// Health score status thresholds (from gpu_health.go lines 760-769).
 	scoreHealthyThreshold  = 90 // >= 90 = healthy
@@ -213,19 +213,19 @@ func TestGPUHealthHandler_checkTemperature(t *testing.T) {
 			wantMargin: int(testTempSlowdown) - 60, // 22
 		},
 		{
-			name:       "elevated", // within tempElevatedMargin of slowdown
+			name:       "elevated",                                    // within tempElevatedMargin of slowdown
 			temp:       testTempSlowdown - testTempElevatedMargin + 3, // 75
 			wantStatus: "elevated",
 			wantMargin: int(testTempSlowdown) - int(testTempSlowdown-testTempElevatedMargin+3), // 7
 		},
 		{
-			name:       "high", // at or above slowdown, below shutdown
+			name:       "high",               // at or above slowdown, below shutdown
 			temp:       testTempSlowdown + 3, // 85
 			wantStatus: "high",
 			wantMargin: int(testTempSlowdown) - int(testTempSlowdown+3), // -3
 		},
 		{
-			name:       "critical", // at or above shutdown
+			name:       "critical",           // at or above shutdown
 			temp:       testTempShutdown + 2, // 92
 			wantStatus: "critical",
 			wantMargin: int(testTempSlowdown) - int(testTempShutdown+2), // -10
