@@ -83,6 +83,7 @@ func (h *GPUInventoryHandler) Handle(
 
 	// Create response
 	response := map[string]interface{}{
+		"api_version":    APIVersion,
 		"status":         "success",
 		"driver_version": driverVersion,
 		"cuda_version":   cudaVersion,

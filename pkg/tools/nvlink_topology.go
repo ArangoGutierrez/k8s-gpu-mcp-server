@@ -34,7 +34,10 @@ func NewNVLinkTopologyHandler(nvmlClient nvml.Interface) *NVLinkTopologyHandler 
 }
 
 // NVLinkTopologyResponse is the response structure for NVLink topology.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type NVLinkTopologyResponse struct {
+	APIVersion   string             `json:"api_version"`
 	GPUCount     int                `json:"gpu_count"`
 	Links        []NVLinkConnection `json:"links"`
 	Summary      string             `json:"summary"`
@@ -70,8 +73,9 @@ func (h *NVLinkTopologyHandler) Handle(
 	}
 
 	response := NVLinkTopologyResponse{
-		GPUCount: count,
-		Links:    make([]NVLinkConnection, 0),
+		APIVersion: APIVersion,
+		GPUCount:   count,
+		Links:      make([]NVLinkConnection, 0),
 	}
 
 	if count == 0 {

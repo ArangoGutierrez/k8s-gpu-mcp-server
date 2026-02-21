@@ -320,7 +320,10 @@ func (h *GetIncidentReportHandler) lookupByPod(
 }
 
 // IncidentReportResponse is the full response from get_incident_report.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type IncidentReportResponse struct {
+	APIVersion       string                     `json:"api_version"`
 	IncidentID       string                     `json:"incident_id"`
 	Timestamp        string                     `json:"timestamp"`
 	DurationAnalyzed string                     `json:"duration_analyzed"`
@@ -412,6 +415,7 @@ func (h *GetIncidentReportHandler) buildReportResponse(
 	args *reportArgs,
 ) IncidentReportResponse {
 	resp := IncidentReportResponse{
+		APIVersion:       APIVersion,
 		IncidentID:       incident.ID,
 		Timestamp:        incident.Timestamp.Format(time.RFC3339),
 		DurationAnalyzed: calculateAnalysisDuration(incident),

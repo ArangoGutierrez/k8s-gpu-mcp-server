@@ -155,6 +155,9 @@ func (p *ProxyHandler) aggregateResults(
 	results []NodeResult,
 	includeK8sMetadata bool,
 ) interface{} {
+	// Check for API version mismatches across agent responses
+	p.checkAPIVersionMismatch(results)
+
 	// Special handling for get_gpu_inventory - create cluster summary
 	if p.toolName == "get_gpu_inventory" {
 		return p.aggregateGPUInventory(ctx, results, includeK8sMetadata)
@@ -162,6 +165,28 @@ func (p *ProxyHandler) aggregateResults(
 
 	// Default aggregation for other tools
 	return p.aggregateDefault(results)
+}
+
+// checkAPIVersionMismatch logs a warning if agent responses report different
+// api_version values. This is informational only and does NOT fail the request.
+func (p *ProxyHandler) checkAPIVersionMismatch(results []NodeResult) {
+	versions := make(map[string][]string) // version -> list of node names
+	for _, result := range results {
+		if result.Error != "" {
+			continue
+		}
+		parsed := parseToolResponse(result.Response)
+		if m, ok := parsed.(map[string]interface{}); ok {
+			if v, ok := m["api_version"].(string); ok && v != "" {
+				versions[v] = append(versions[v], result.NodeName)
+			}
+		}
+	}
+	if len(versions) > 1 {
+		klog.InfoS("API version mismatch detected across agents",
+			"tool", p.toolName,
+			"versions", versions)
+	}
 }
 
 // aggregateDefault provides the standard aggregation for most tools.

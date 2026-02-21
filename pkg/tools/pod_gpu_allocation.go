@@ -54,13 +54,16 @@ type ContainerGPUAllocation struct {
 }
 
 // PodGPUAllocationResponse is the response for get_pod_gpu_allocation.
+// This struct is safe for concurrent read access; writes are confined to the
+// handler goroutine that creates it.
 type PodGPUAllocationResponse struct {
-	Status   string             `json:"status"`
-	NodeName string             `json:"node_name"`
-	Pods     []PodGPUAllocation `json:"pods"`
-	Summary  AllocationSummary  `json:"summary"`
-	Error    string             `json:"error,omitempty"`
-	Hint     string             `json:"hint,omitempty"`
+	APIVersion string             `json:"api_version"`
+	Status     string             `json:"status"`
+	NodeName   string             `json:"node_name"`
+	Pods       []PodGPUAllocation `json:"pods"`
+	Summary    AllocationSummary  `json:"summary"`
+	Error      string             `json:"error,omitempty"`
+	Hint       string             `json:"hint,omitempty"`
 }
 
 // AllocationSummary provides summary statistics for GPU allocations.
@@ -116,12 +119,13 @@ func (h *PodGPUAllocationHandler) Handle(
 			"hint", "Agent may lack RBAC permissions. Apply deployment/rbac/agent-rbac-readonly.yaml")
 		// Return sanitized error to client — avoid leaking internal K8s API details
 		response := PodGPUAllocationResponse{
-			Status:   "error",
-			NodeName: nodeName,
-			Pods:     []PodGPUAllocation{},
-			Summary:  AllocationSummary{},
-			Error:    "internal error: failed to list pods on node",
-			Hint:     "Check agent RBAC permissions. See server logs for details.",
+			APIVersion: APIVersion,
+			Status:     "error",
+			NodeName:   nodeName,
+			Pods:       []PodGPUAllocation{},
+			Summary:    AllocationSummary{},
+			Error:      "internal error: failed to list pods on node",
+			Hint:       "Check agent RBAC permissions. See server logs for details.",
 		}
 		jsonBytes, marshalErr := json.MarshalIndent(response, "", "  ")
 		if marshalErr != nil {
@@ -163,9 +167,10 @@ func (h *PodGPUAllocationHandler) Handle(
 
 	// Create response
 	response := PodGPUAllocationResponse{
-		Status:   "success",
-		NodeName: nodeName,
-		Pods:     gpuPods,
+		APIVersion: APIVersion,
+		Status:     "success",
+		NodeName:   nodeName,
+		Pods:       gpuPods,
 		Summary: AllocationSummary{
 			TotalPods:          len(gpuPods),
 			TotalGPUsAllocated: totalGPUs,
