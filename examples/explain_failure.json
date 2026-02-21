@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "explain_failure",
+    "arguments": {
+      "pod_name": "training-job-abc",
+      "namespace": "ml-workloads"
+    }
+  },
+  "id": 8
+}

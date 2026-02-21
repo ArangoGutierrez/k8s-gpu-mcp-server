@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_incident_report",
+    "arguments": {
+      "pod_name": "training-job-abc",
+      "namespace": "ml-workloads",
+      "include_snapshots": true,
+      "include_raw_events": false
+    }
+  },
+  "id": 9
+}

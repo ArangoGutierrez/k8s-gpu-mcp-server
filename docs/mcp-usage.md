@@ -230,6 +230,11 @@ echo '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' | ./bin/agent
         "inputSchema": {"type": "object", "properties": {}}
       },
       {
+        "name": "get_nvlink_topology",
+        "description": "Get NVLink interconnect topology and health status",
+        "inputSchema": {"type": "object", "properties": {}}
+      },
+      {
         "name": "describe_gpu_node",
         "description": "Comprehensive view of a GPU node with K8s metadata",
         "inputSchema": {
@@ -248,6 +253,45 @@ echo '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' | ./bin/agent
             "namespace": {"type": "string"}
           },
           "required": ["node_name"]
+        }
+      },
+      {
+        "name": "explain_failure",
+        "description": "Analyze why a GPU workload failed with root cause analysis",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pod_name": {"type": "string"},
+            "namespace": {"type": "string"}
+          },
+          "required": ["pod_name"]
+        }
+      },
+      {
+        "name": "get_incident_report",
+        "description": "Get detailed incident report with timeline and hardware snapshots",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "incident_id": {"type": "string"},
+            "pod_name": {"type": "string"},
+            "namespace": {"type": "string"},
+            "include_snapshots": {"type": "boolean"},
+            "include_raw_events": {"type": "boolean"}
+          }
+        }
+      },
+      {
+        "name": "get_gpu_timeline",
+        "description": "Get historical GPU metrics from the flight recorder",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "gpu_uuid": {"type": "string"},
+            "gpu_index": {"type": "number"},
+            "duration": {"type": "string"},
+            "include_stats": {"type": "boolean"}
+          }
         }
       }
     ]
@@ -290,13 +334,25 @@ It uses two methods:
 2. **`dmesg` command** (fallback) - Used when `/dev/kmsg` is not available.
    Requires a non-distroless container with `dmesg` installed.
 
-**Helm configuration:**
+**Helm configuration for XID analysis:**
+
 ```yaml
+# values.yaml - XID error analysis configuration
 xidAnalysis:
   enabled: true  # Mounts /dev/kmsg from host
 
 securityContext:
   privileged: true  # Required to read /dev/kmsg
+```
+
+**Full Helm install with XID analysis enabled:**
+
+```bash
+helm install k8s-gpu-mcp-server \
+  oci://ghcr.io/arangogutierrez/charts/k8s-gpu-mcp-server \
+  --namespace gpu-diagnostics --create-namespace \
+  --set xidAnalysis.enabled=true \
+  --set securityContext.privileged=true
 ```
 
 When deployed with the Helm chart, `/dev/kmsg` is mounted by default, enabling
@@ -580,6 +636,300 @@ including hardware status, Kubernetes metadata, and running workloads.
 **Use Case:** Correlate GPU hardware with Kubernetes workloads. Useful for
 identifying which pods are using specific GPUs, debugging resource contention,
 and capacity planning.
+
+### get_nvlink_topology
+
+**Purpose:** Get NVLink interconnect topology and health status for multi-GPU systems
+
+**Arguments:** None
+
+**Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_nvlink_topology",
+    "arguments": {}
+  },
+  "id": 7
+}
+```
+
+**Response:**
+```json
+{
+  "gpu_count": 4,
+  "links": [
+    {
+      "gpu1": 0,
+      "gpu2": 1,
+      "link_type": "NVLink",
+      "active": true,
+      "error_count": 0
+    },
+    {
+      "gpu1": 0,
+      "gpu2": 2,
+      "link_type": "NVLink",
+      "active": true,
+      "error_count": 0
+    }
+  ],
+  "summary": "4 GPUs with 2 NVLink connection(s): GPU 0↔GPU 1, GPU 0↔GPU 2",
+  "health_status": "healthy"
+}
+```
+
+**Field Descriptions:**
+- `gpu_count`: Total GPU devices on the node
+- `links`: Array of NVLink connections between GPU pairs
+- `link_type`: Connection type (currently always "NVLink")
+- `error_count`: Cumulative NVLink errors on the link
+- `health_status`: Overall NVLink health: `healthy` (0 errors), `warning` (>0 errors), or `degraded` (>1000 errors)
+
+**Use Case:** Diagnose silent NVLink degradation in multi-GPU training setups.
+Useful for verifying GPU-to-GPU connectivity before large distributed training jobs.
+
+### explain_failure
+
+**Purpose:** Analyze why a GPU workload failed and provide human-readable
+explanation with root cause analysis and actionable recommendations
+
+**Arguments:**
+- `pod_name` (required): Name of the failed pod
+- `namespace` (optional): Kubernetes namespace (default: current namespace)
+
+**Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "explain_failure",
+    "arguments": {
+      "pod_name": "training-job-abc",
+      "namespace": "ml-workloads"
+    }
+  },
+  "id": 8
+}
+```
+
+**Response:**
+```json
+{
+  "pod": {
+    "name": "training-job-abc",
+    "namespace": "ml-workloads",
+    "node": "gpu-node-5",
+    "container": "trainer"
+  },
+  "gpu": {
+    "uuid": "GPU-d129fc5b-2d51-cec7-d985-49168c12716f",
+    "index": 0
+  },
+  "root_cause": {
+    "category": "gpu_hardware",
+    "confidence": 0.85,
+    "not_your_code": true,
+    "evidence": ["XID 48 detected within 5s of pod failure", "Uncorrectable ECC error"]
+  },
+  "explanation": "The training job failed due to a GPU hardware error (XID 48: Double Bit ECC Error). This is not a code issue - the GPU has uncorrectable memory errors.",
+  "timeline": [
+    {"t": "0s", "event": "[BackOff] Back-off restarting failed container"},
+    {"t": "-2s", "event": "XID 48 detected on GPU 0"}
+  ],
+  "recommendations": [
+    {"action": "drain_node", "priority": "high", "description": "Drain workloads from this node"},
+    {"action": "replace_gpu", "priority": "medium", "description": "Schedule GPU replacement"}
+  ]
+}
+```
+
+**Key Fields:**
+- `not_your_code`: Boolean indicating whether the failure was caused by hardware (true) or user code (false)
+- `confidence`: Root cause confidence score from 0.0 to 1.0
+- `category`: Failure category (e.g., `gpu_hardware`, `oom`, `user_code`, `scheduling`)
+
+**Use Case:** Quickly determine if a failed GPU workload is due to hardware issues
+or application bugs. Reduces triage time for SREs.
+
+### get_incident_report
+
+**Purpose:** Get a detailed incident report with full timeline, hardware snapshots,
+and correlated events. More detailed than `explain_failure`.
+
+**Arguments:**
+- `incident_id` (optional): Incident ID from a previous `explain_failure` call
+- `pod_name` (optional): Pod name (alternative to `incident_id`). At least one of `incident_id` or `pod_name` is required
+- `namespace` (optional): Kubernetes namespace
+- `include_snapshots` (optional): Include full GPU telemetry snapshots (default: true)
+- `include_raw_events` (optional): Include raw K8s and XID events (default: false)
+
+**Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_incident_report",
+    "arguments": {
+      "pod_name": "training-job-abc",
+      "namespace": "ml-workloads",
+      "include_snapshots": true,
+      "include_raw_events": false
+    }
+  },
+  "id": 9
+}
+```
+
+**Response:**
+```json
+{
+  "incident_id": "report-1706000000000",
+  "timestamp": "2026-01-23T10:30:00Z",
+  "duration_analyzed": "30m",
+  "pod": {
+    "name": "training-job-abc",
+    "namespace": "ml-workloads",
+    "uid": "abc-123",
+    "node": "gpu-node-5",
+    "termination_reason": "Error"
+  },
+  "gpu": {
+    "uuid": "GPU-d129fc5b-2d51-cec7-d985-49168c12716f"
+  },
+  "root_cause": {
+    "category": "gpu_hardware",
+    "confidence": 0.85,
+    "not_your_code": true,
+    "evidence": ["XID 48 detected within 5s of pod failure"]
+  },
+  "timeline": [
+    {
+      "timestamp": "2026-01-23T10:29:58Z",
+      "relative": "-2s",
+      "event_type": "xid",
+      "severity": "critical",
+      "description": "XID 48: Double Bit ECC Error on GPU 0"
+    },
+    {
+      "timestamp": "2026-01-23T10:30:00Z",
+      "relative": "0s",
+      "event_type": "k8s",
+      "severity": "critical",
+      "description": "[BackOff] Back-off restarting failed container"
+    }
+  ],
+  "gpu_snapshots": [
+    {
+      "timestamp": "2026-01-23T10:29:00Z",
+      "temperature": 72,
+      "power_mw": 250000,
+      "gpu_util": 98,
+      "mem_util": 85
+    }
+  ],
+  "recommendations": [
+    {"action": "drain_node", "priority": "high", "description": "Drain workloads from this node"}
+  ],
+  "explanation": "The training job failed due to a GPU hardware error..."
+}
+```
+
+**Use Case:** Deep debugging, post-mortem analysis, or generating detailed
+incident reports for escalation. The `gpu_snapshots` field provides historical
+telemetry from the flight recorder around the time of failure.
+
+### get_gpu_timeline
+
+**Purpose:** Get historical GPU metrics for a specific time window from the
+flight recorder. Returns time-series data for temperature, power, utilization,
+and memory.
+
+**Arguments:**
+- `gpu_uuid` (optional): GPU UUID to query (defaults to all GPUs)
+- `gpu_index` (optional): GPU device index (alternative to `gpu_uuid`)
+- `duration` (optional): Time window to query (default: `30m`). Examples: `10m`, `1h`, `2h30m`. Maximum: `24h`
+- `include_stats` (optional): Include min/max/avg statistics (default: true)
+
+**Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_gpu_timeline",
+    "arguments": {
+      "gpu_index": 0,
+      "duration": "1h",
+      "include_stats": true
+    }
+  },
+  "id": 10
+}
+```
+
+**Response (single GPU):**
+```json
+{
+  "gpu_uuid": "GPU-d129fc5b-2d51-cec7-d985-49168c12716f",
+  "gpu_index": 0,
+  "gpu_name": "Tesla T4",
+  "duration": "1h0m0s",
+  "sample_count": 60,
+  "sample_interval": "1m0s",
+  "data_points": [
+    {
+      "timestamp": "2026-01-23T09:30:00Z",
+      "temperature_celsius": 45,
+      "power_mw": 70000,
+      "gpu_util_percent": 95,
+      "mem_util_percent": 80,
+      "mem_used_bytes": 12884901888,
+      "mem_total_bytes": 16106127360,
+      "throttling": false
+    }
+  ],
+  "statistics": {
+    "temperature": {"min": 42, "max": 78, "avg": 55.3},
+    "power_mw": {"min": 15000, "max": 250000, "avg": 120000},
+    "gpu_util": {"min": 0, "max": 100, "avg": 72.5},
+    "mem_util": {"min": 10, "max": 95, "avg": 60.2}
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-23T10:15:00Z",
+      "type": "throttle_start",
+      "description": "GPU throttling started"
+    }
+  ]
+}
+```
+
+**Response (all GPUs, when no `gpu_uuid` or `gpu_index` specified):**
+```json
+{
+  "gpu_count": 2,
+  "duration": "30m0s",
+  "timelines": [
+    {"gpu_uuid": "GPU-xxx", "gpu_index": 0, "...": "..."},
+    {"gpu_uuid": "GPU-yyy", "gpu_index": 1, "...": "..."}
+  ]
+}
+```
+
+**Key Fields:**
+- `data_points`: Time-series GPU telemetry samples
+- `statistics`: Aggregated min/max/avg for key metrics
+- `events`: Throttling state changes and XID events detected in the window
+- `sample_interval`: Time between consecutive data points
+
+**Use Case:** Answer questions like "What was the GPU temperature 10 minutes ago?"
+or "Show me the power usage trend over the last hour." The flight recorder must
+be running for this tool to return data.
 
 ## Available Prompts
 

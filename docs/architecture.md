@@ -120,7 +120,7 @@ For multi-node clusters, the gateway provides unified access:
 │  Agent Pod (Node 1) │  │  Agent Pod (Node 2) │  │  Agent Pod (Node N) │
 │  :8080              │  │  :8080              │  │  :8080              │
 │  ┌───────────────┐  │  │  ┌───────────────┐  │  │  ┌───────────────┐  │
-│  │ 5 MCP Tools   │  │  │  │ 5 MCP Tools   │  │  │  │ 5 MCP Tools   │  │
+│  │ 9 MCP Tools   │  │  │  │ 9 MCP Tools   │  │  │  │ 9 MCP Tools   │  │
 │  │ NVML Client   │  │  │  │ NVML Client   │  │  │  │ NVML Client   │  │
 │  └───────┬───────┘  │  │  └───────┬───────┘  │  │  └───────┬───────┘  │
 │          │ CGO      │  │          │ CGO      │  │          │ CGO      │
@@ -331,15 +331,19 @@ type Device interface {
 
 ### Tool Handlers (`pkg/tools/`)
 
-Five MCP tools are available:
+Nine MCP tools are available:
 
 | Tool | File | Category | Description |
 |------|------|----------|-------------|
 | `get_gpu_inventory` | `gpu_inventory.go` | NVML | Hardware inventory + telemetry |
 | `get_gpu_health` | `gpu_health.go` | NVML | Health monitoring with scoring |
 | `analyze_xid_errors` | `analyze_xid.go` | NVML | XID error parsing from kernel logs |
+| `get_nvlink_topology` | `nvlink_topology.go` | NVML | NVLink interconnect topology and health |
+| `get_gpu_timeline` | `get_gpu_timeline.go` | NVML + Blackbox | Historical GPU metrics from flight recorder |
 | `describe_gpu_node` | `describe_gpu_node.go` | K8s + NVML | Node-level diagnostics |
 | `get_pod_gpu_allocation` | `pod_gpu_allocation.go` | K8s | GPU-to-Pod correlation |
+| `explain_failure` | `explain_failure.go` | K8s + Incidents | Root cause analysis for failed workloads |
+| `get_incident_report` | `get_incident_report.go` | K8s + Incidents | Detailed incident report with timeline |
 
 **Tool Handler Pattern:**
 ```go
@@ -358,6 +362,119 @@ func (h *XYZHandler) Handle(
     // 5. Return MCP result
 }
 ```
+
+### DCGM Integration (`pkg/dcgm/`)
+
+Optional abstraction layer over NVIDIA DCGM (Data Center GPU Manager). Provides
+advanced GPU telemetry features beyond NVML when DCGM is available, and degrades
+gracefully to NVML-only mode when it is not.
+
+**Key Types:**
+- `Interface` - Contract for DCGM operations (Init, Shutdown, WatchFields, etc.)
+- `Client` - Placeholder client for external DCGM daemon connection
+- `Embedded` - Embedded mode that starts nv-hostengine internally
+- `Stub` - No-op implementation for when DCGM is unavailable
+- `Mock` - Test implementation with configurable responses
+
+**Connection Modes:**
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Embedded** | Starts nv-hostengine internally | Self-contained deployments |
+| **External** | Connects to existing DCGM daemon via socket | Shared DCGM infrastructure |
+| **Stub** | No-op, returns empty data | Consumer GPUs, DCGM unavailable |
+
+**DCGM-Exclusive Features:**
+- Native XID error field (no `/dev/kmsg` log parsing required)
+- GPU profiling metrics (SM occupancy, tensor core utilization)
+- NVSwitch fabric monitoring
+- Built-in time-series with statistical aggregation
+- Health policies and configurable thresholds
+
+**Key Files:**
+- `interface.go` - Interface definition with all DCGM operations
+- `client.go` - External socket connection client
+- `embedded.go` - Embedded nv-hostengine mode
+- `stub.go` - No-op stub for graceful degradation
+- `mock.go` - Test mock with configurable responses
+- `types.go` - Data types (ProfilingMetrics, NVSwitchStatus, HealthPolicy, etc.)
+
+### Flight Recorder (`pkg/blackbox/`)
+
+Continuously captures GPU telemetry into per-GPU ring buffers for historical
+analysis. Named after aviation "black box" flight recorders, this package
+retains a sliding window of GPU metrics used by the `get_gpu_timeline` and
+`get_incident_report` tools.
+
+**Key Types:**
+- `Recorder` - Main recorder that polls NVML at configurable intervals
+- `RingBuffer[T]` - Generic ring buffer for fixed-size rolling storage
+- `GPUSnapshot` - Single telemetry sample (temperature, power, utilization, memory, throttle state)
+- `RecorderConfig` - Configuration (poll interval, buffer size, GPU filters)
+
+**How It Works:**
+1. `Recorder.Start()` begins periodic polling of all GPUs via NVML
+2. Each poll creates a `GPUSnapshot` stored in a per-GPU `RingBuffer`
+3. Tools query historical data via `GetTimeline(uuid, duration)` or `GetAllTimelines(duration)`
+4. `Recorder.Stop()` halts polling; data remains queryable until garbage collected
+
+**Key Files:**
+- `recorder.go` - Main recorder with lifecycle management
+- `ring_buffer.go` - Generic ring buffer implementation
+- `types.go` - GPUSnapshot and configuration types
+
+### Event Correlation (`pkg/events/`)
+
+Correlates events from multiple sources (Kubernetes, XID errors, GPU telemetry)
+around a trigger event to build a unified incident timeline. Used by the
+`explain_failure` and `get_incident_report` tools.
+
+**Key Types:**
+- `Correlator` - Main correlation engine that groups events within a time window
+- `Event` - Unified event from any source (K8s, XID, GPU telemetry)
+- `CorrelatedIncident` - Result of correlation: trigger, related events, timeline, affected pods
+- `K8sEvent` - Kubernetes event data
+- `TimelineEntry` - Single entry in the correlated timeline
+- `AffectedPod` - Pod affected by an incident
+
+**How It Works:**
+1. A trigger event (e.g., pod failure) is submitted to the `Correlator`
+2. The correlator queries multiple sources within a configurable time window (default: 5s)
+3. Events are sorted chronologically and causality is assessed
+4. A `CorrelatedIncident` is returned with timeline, affected pods, and GPU snapshots
+
+**Key Files:**
+- `correlator.go` - Event correlation engine
+- `types.go` - Event, CorrelatedIncident, and related types
+
+### Incident Analysis (`pkg/incidents/`)
+
+Performs pattern-based root cause analysis on correlated incidents. Uses
+known GPU failure patterns to determine whether a failure is hardware-related
+or user-caused, with confidence scoring.
+
+**Key Types:**
+- `Analyzer` - Pattern matcher that scores root causes with confidence
+- `Explainer` - Generates human-readable explanations from incidents
+- `IncidentReport` - Analysis result with root cause, confidence, and recommendations
+- `FailurePattern` - Known failure pattern with match criteria and scoring
+- `Recommendation` - Actionable recommendation with priority
+- `RootCause` - Identified cause with category, confidence, and `not_your_code` flag
+
+**Known Failure Categories:**
+- `gpu_hardware` - GPU hardware failures (XID errors, ECC errors)
+- `oom` - GPU out-of-memory conditions
+- `thermal` - Thermal throttling or shutdown
+- `nvlink` - NVLink communication failures
+- `driver` - GPU driver issues
+- `user_code` - Application-level failures
+- `scheduling` - Kubernetes scheduling failures
+
+**Key Files:**
+- `analyzer.go` - Root cause analysis with pattern matching
+- `explainer.go` - Human-readable explanation generation
+- `patterns.go` - Known GPU failure patterns
+- `types.go` - IncidentReport, RootCause, Recommendation types
 
 ### Metrics (`pkg/metrics/`)
 
@@ -623,9 +740,37 @@ k8s-gpu-mcp-server/
 │   │   ├── gpu_inventory.go     # get_gpu_inventory
 │   │   ├── gpu_health.go        # get_gpu_health
 │   │   ├── analyze_xid.go       # analyze_xid_errors
+│   │   ├── nvlink_topology.go   # get_nvlink_topology
+│   │   ├── get_gpu_timeline.go  # get_gpu_timeline
 │   │   ├── describe_gpu_node.go # describe_gpu_node
 │   │   ├── pod_gpu_allocation.go# get_pod_gpu_allocation
+│   │   ├── explain_failure.go   # explain_failure
+│   │   ├── get_incident_report.go # get_incident_report
+│   │   ├── pod_failure.go       # Pod failure extraction helpers
 │   │   └── validation.go        # Input validation
+│   │
+│   ├── blackbox/                # Flight recorder
+│   │   ├── recorder.go          # GPU telemetry recorder
+│   │   ├── ring_buffer.go       # Generic ring buffer
+│   │   └── types.go             # GPUSnapshot, config types
+│   │
+│   ├── dcgm/                    # DCGM integration (optional)
+│   │   ├── interface.go         # DCGM interface definition
+│   │   ├── client.go            # External DCGM client
+│   │   ├── embedded.go          # Embedded nv-hostengine mode
+│   │   ├── stub.go              # No-op stub
+│   │   ├── mock.go              # Test mock
+│   │   └── types.go             # DCGM data types
+│   │
+│   ├── events/                  # Event correlation
+│   │   ├── correlator.go        # Event correlation engine
+│   │   └── types.go             # Event, CorrelatedIncident types
+│   │
+│   ├── incidents/               # Incident analysis
+│   │   ├── analyzer.go          # Root cause analysis
+│   │   ├── explainer.go         # Human-readable explanations
+│   │   ├── patterns.go          # Known failure patterns
+│   │   └── types.go             # Report, RootCause types
 │   │
 │   └── xid/                     # XID error parsing
 │       ├── codes.go             # XID code database
@@ -645,7 +790,13 @@ k8s-gpu-mcp-server/
 │   ├── initialize.json
 │   ├── gpu_inventory.json
 │   ├── gpu_health.json
-│   └── analyze_xid.json
+│   ├── analyze_xid.json
+│   ├── describe_gpu_node.json
+│   ├── pod_gpu_allocation.json
+│   ├── nvlink_topology.json
+│   ├── explain_failure.json
+│   ├── get_incident_report.json
+│   └── get_gpu_timeline.json
 │
 ├── npm/                         # npm package
 │   ├── package.json

@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_gpu_timeline",
+    "arguments": {
+      "gpu_index": 0,
+      "duration": "30m",
+      "include_stats": true
+    }
+  },
+  "id": 10
+}

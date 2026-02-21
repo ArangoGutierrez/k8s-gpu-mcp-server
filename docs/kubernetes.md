@@ -163,6 +163,31 @@ curl -s http://localhost:8080/healthz
 | **HTTP** | ✅ Yes | ~12-57ms | Production, gateway routing |
 | **Stdio** | No | ~30s | Direct debugging via kubectl exec |
 
+### Gateway Routing Modes
+
+When the gateway is enabled, it routes MCP requests to agent pods using one of
+two modes:
+
+| Mode | Flag | Description | Performance |
+|------|------|-------------|-------------|
+| **HTTP** (default) | `--routing-mode=http` | Direct HTTP to agent pods via pod IP | ~12-57ms latency |
+| **Exec** (legacy) | `--routing-mode=exec` | Routes via Kubernetes API server exec | ~30s latency |
+
+**HTTP routing** (default) sends requests directly to agent pod IPs over the
+cluster network. This requires functional cross-node pod-to-pod networking
+(see [Network Requirements](#network-requirements-http-transport)).
+
+**Exec routing** is a legacy fallback that routes through the Kubernetes API
+server. Use this when cross-node networking is not available:
+
+```bash
+helm install k8s-gpu-mcp-server \
+  oci://ghcr.io/arangogutierrez/charts/k8s-gpu-mcp-server \
+  --namespace gpu-diagnostics --create-namespace \
+  --set gateway.enabled=true \
+  --set gateway.routingMode=exec
+```
+
 > 📖 See [Architecture Documentation](architecture.md) for detailed design.
 
 ## Connecting to the Gateway
@@ -333,9 +358,50 @@ helm install k8s-gpu-mcp-server ./deployment/helm/k8s-gpu-mcp-server \
   --set gateway.enabled=false
 ```
 
+### Port Configuration
+
+The agent HTTP server and related endpoints use the following ports:
+
+| Port | Service | Description |
+|------|---------|-------------|
+| `8080` | MCP HTTP | Main MCP JSON-RPC endpoint (`/mcp`) and health probes |
+| `8080` | Health | Liveness (`/healthz`), readiness (`/readyz`) |
+| `8080` | Metrics | Prometheus metrics (`/metrics`) |
+
+To change the HTTP port:
+
+```bash
+helm install k8s-gpu-mcp-server \
+  oci://ghcr.io/arangogutierrez/charts/k8s-gpu-mcp-server \
+  --namespace gpu-diagnostics --create-namespace \
+  --set transport.http.port=9090
+```
+
+When using `kubectl port-forward`, map to the configured port:
+
+```bash
+# Default port (8080)
+kubectl port-forward -n gpu-diagnostics svc/k8s-gpu-mcp-server 8080:8080
+
+# Custom port (9090)
+kubectl port-forward -n gpu-diagnostics svc/k8s-gpu-mcp-server 9090:9090
+```
+
 ### DCGM Integration (Advanced)
 
-For datacenter GPUs with DCGM support:
+For datacenter GPUs (Tesla, A100, H100) with DCGM support, the agent can
+optionally integrate with NVIDIA DCGM for advanced telemetry including
+profiling metrics, NVSwitch monitoring, and native XID error collection.
+
+**DCGM Helm Values:**
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `agent.dcgm.enabled` | `false` | Enable DCGM integration |
+| `agent.dcgm.mode` | `embedded` | DCGM mode: `embedded` or `external` |
+| `agent.dcgm.socket` | `/var/run/dcgm.sock` | Socket path for external mode |
+
+**Embedded mode** (self-contained, starts nv-hostengine internally):
 
 ```bash
 helm install k8s-gpu-mcp-server \
@@ -344,6 +410,20 @@ helm install k8s-gpu-mcp-server \
   --set agent.dcgm.enabled=true \
   --set agent.dcgm.mode=embedded
 ```
+
+**External mode** (connects to existing DCGM daemon):
+
+```bash
+helm install k8s-gpu-mcp-server \
+  oci://ghcr.io/arangogutierrez/charts/k8s-gpu-mcp-server \
+  --namespace gpu-diagnostics --create-namespace \
+  --set agent.dcgm.enabled=true \
+  --set agent.dcgm.mode=external \
+  --set agent.dcgm.socket=/var/run/dcgm.sock
+```
+
+DCGM is optional. When unavailable, the agent falls back to NVML-only mode
+with no loss of core functionality. See [Architecture - DCGM Integration](architecture.md#dcgm-integration-pkgdcgm) for details.
 
 > 📖 See [Helm Chart README](../deployment/helm/k8s-gpu-mcp-server/README.md) for full values reference.
 
