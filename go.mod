@@ -3,6 +3,9 @@ module github.com/ArangoGutierrez/k8s-gpu-mcp-server
 go 1.25.0
 
 require (
+	// NOTE: go-nvml v0.13.0-1 is a pre-release version. This is the latest
+	// available tag as of 2025-Q4. Upgrade to a stable release (v0.13.0 or
+	// later) once NVIDIA publishes one. Track: https://github.com/NVIDIA/go-nvml/releases
 	github.com/NVIDIA/go-nvml v0.13.0-1
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.43.2

@@ -31,5 +31,6 @@
   ],
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "_distribution_note": "This npm package provides a thin wrapper that downloads the pre-built Go binary for the current platform from GitHub Releases. It does NOT include platform-specific npm packages (@k8s-gpu-mcp-server/linux-x64, etc.). If the binary download fails (e.g., in air-gapped environments), use the container image instead: ghcr.io/arangogutierrez/k8s-gpu-mcp-server"
 }

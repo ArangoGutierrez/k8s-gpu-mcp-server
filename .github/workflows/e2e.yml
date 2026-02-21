@@ -3,9 +3,22 @@
 
 name: E2E Tests
 
+# E2E tests run nightly and on-demand. They are NOT part of the default PR gate
+# because KIND cluster setup + container build adds ~10-15 minutes to CI.
+# The pull_request trigger is present but is typically skipped via path filters
+# or branch protection rules. For critical PRs (e.g., Helm chart or Containerfile
+# changes), maintainers can manually trigger via workflow_dispatch or call this
+# workflow from another workflow using workflow_call.
 on:
   pull_request:
+    # Only auto-run E2E on PRs that touch deployment or E2E test files
+    paths:
+      - 'deployment/**'
+      - 'test/e2e/**'
+      - '.github/workflows/e2e.yml'
   workflow_dispatch:
+  # Allow other workflows (e.g., PR gate) to call this as a reusable workflow
+  workflow_call:
   schedule:
     # Run nightly at 6 AM UTC to catch regressions
     - cron: '0 6 * * *'
