@@ -167,6 +167,60 @@ func TestTransportType_Constants(t *testing.T) {
 	assert.Equal(t, TransportType("http"), TransportHTTP)
 }
 
+func TestRequireBearerAuth(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	httpServer := NewHTTPServer(mcpServer, ":0", "1.0.0")
+	httpServer.SetMetricsAuthToken("secret-token-123")
+
+	// Wrap a simple OK handler with the auth middleware
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	protected := httpServer.requireBearerAuth(okHandler)
+
+	t.Run("no_auth_header", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		w := httptest.NewRecorder()
+		protected.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Contains(t, w.Body.String(), "authorization required")
+	})
+
+	t.Run("wrong_token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Header.Set("Authorization", "Bearer wrong-token")
+		w := httptest.NewRecorder()
+		protected.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Contains(t, w.Body.String(), "invalid token")
+	})
+
+	t.Run("invalid_scheme", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+		w := httptest.NewRecorder()
+		protected.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Contains(t, w.Body.String(), "invalid authorization scheme")
+	})
+
+	t.Run("valid_token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Header.Set("Authorization", "Bearer secret-token-123")
+		w := httptest.NewRecorder()
+		protected.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestHTTPServer_MetricsNoAuth_WhenTokenEmpty(t *testing.T) {
+	// When no auth token is configured, metrics should be accessible
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	httpServer := NewHTTPServer(mcpServer, ":0", "1.0.0")
+	// metricsAuthToken is empty by default — no auth required
+	assert.Empty(t, httpServer.metricsAuthToken)
+}
+
 func TestHTTPServer_MethodNotAllowed(t *testing.T) {
 	mcpServer := server.NewMCPServer("test", "1.0.0")
 	httpServer := NewHTTPServer(mcpServer, ":0", "1.0.0")
