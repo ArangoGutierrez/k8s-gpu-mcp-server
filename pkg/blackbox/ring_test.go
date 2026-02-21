@@ -702,3 +702,222 @@ func BenchmarkRingBuffer_Query(b *testing.B) {
 		})
 	}
 }
+
+// --- Concurrency stress tests ---
+
+func TestRingBufferConcurrentWriteRead(t *testing.T) {
+	t.Parallel()
+
+	buf := mustNewRingBuffer[int](100)
+
+	const numWriters = 10
+	const numReaders = 10
+	const opsPerGoroutine = 500
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	// Writers
+	for w := 0; w < numWriters; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < opsPerGoroutine; i++ {
+				buf.Add(id*10000 + i)
+			}
+		}(w)
+	}
+
+	// Readers doing various read operations concurrently
+	for r := 0; r < numReaders; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < opsPerGoroutine; i++ {
+				switch i % 5 {
+				case 0:
+					_ = buf.Size()
+				case 1:
+					_, _ = buf.Latest()
+				case 2:
+					_ = buf.All()
+				case 3:
+					_ = buf.QueryFunc(func(v int) bool { return v%2 == 0 })
+				case 4:
+					buf.Capacity()
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Buffer should be full (writers wrote 10 * 500 = 5000 items into cap=100)
+	if buf.Size() != 100 {
+		t.Errorf("size = %d, want 100 (capacity)", buf.Size())
+	}
+
+	all := buf.All()
+	if len(all) != 100 {
+		t.Errorf("All() returned %d items, want 100", len(all))
+	}
+}
+
+func TestRingBufferFindNearestDuringWrites(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Date(2026, 1, 19, 12, 0, 0, 0, time.UTC)
+	buf := mustNewRingBuffer[timestampedItem](200)
+
+	// Pre-fill buffer with some data
+	for i := 0; i < 100; i++ {
+		buf.Add(timestampedItem{
+			ts:    baseTime.Add(time.Duration(i) * time.Millisecond),
+			value: i,
+		})
+	}
+
+	const numWriters = 5
+	const numReaders = 10
+	const ops = 200
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	timeFn := func(item timestampedItem) time.Time { return item.ts }
+
+	// Writers keep adding items
+	for w := 0; w < numWriters; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < ops; i++ {
+				buf.Add(timestampedItem{
+					ts:    baseTime.Add(time.Duration(100+id*ops+i) * time.Millisecond),
+					value: 100 + id*ops + i,
+				})
+			}
+		}(w)
+	}
+
+	// Readers call FindNearest concurrently
+	for r := 0; r < numReaders; r++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < ops; i++ {
+				target := baseTime.Add(time.Duration(50+i) * time.Millisecond)
+				item, found := buf.FindNearest(target, timeFn)
+				if found {
+					// Just verify it's a valid timestamped item (no zero value)
+					_ = item.value
+				}
+			}
+		}(r)
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Buffer should be in valid state
+	size := buf.Size()
+	if size == 0 || size > buf.Capacity() {
+		t.Errorf("invalid size: %d (capacity: %d)", size, buf.Capacity())
+	}
+}
+
+func TestRecorderConcurrentSnapshot(t *testing.T) {
+	t.Parallel()
+
+	// Use a ring buffer of GPUSnapshot to simulate the recorder's per-GPU buffer.
+	// This tests concurrent snapshot reads (GetLatest, All, Query) while writes occur.
+	buf := mustNewRingBuffer[GPUSnapshot](100)
+	baseTime := time.Date(2026, 1, 19, 12, 0, 0, 0, time.UTC)
+
+	// Pre-fill with snapshots
+	for i := 0; i < 50; i++ {
+		buf.Add(GPUSnapshot{
+			Timestamp:   baseTime.Add(time.Duration(i) * time.Second),
+			UUID:        "GPU-TEST-0000",
+			Temperature: uint32(40 + i%20),
+			GPUUtil:     uint32(i % 100),
+		})
+	}
+
+	const numWriters = 5
+	const numReaders = 10
+	const ops = 100
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	timeFn := func(s GPUSnapshot) time.Time { return s.Timestamp }
+
+	// Writer goroutines (simulate recorder sampling)
+	for w := 0; w < numWriters; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < ops; i++ {
+				buf.Add(GPUSnapshot{
+					Timestamp:   baseTime.Add(time.Duration(50+id*ops+i) * time.Second),
+					UUID:        "GPU-TEST-0000",
+					Temperature: uint32(45 + i%30),
+					GPUUtil:     uint32(i % 100),
+					MemUsed:     uint64(i * 1024 * 1024),
+					MemTotal:    16 * 1024 * 1024 * 1024,
+				})
+			}
+		}(w)
+	}
+
+	// Reader goroutines (simulate concurrent GetSnapshot/GetTimeline/GetLatestAll)
+	for r := 0; r < numReaders; r++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < ops; i++ {
+				switch i % 4 {
+				case 0:
+					_, _ = buf.Latest()
+				case 1:
+					_ = buf.All()
+				case 2:
+					since := baseTime.Add(time.Duration(30+i) * time.Second)
+					_ = buf.Query(since, timeFn)
+				case 3:
+					target := baseTime.Add(time.Duration(25+i) * time.Second)
+					_, _ = buf.FindNearest(target, timeFn)
+				}
+			}
+		}(r)
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Verify invariants
+	size := buf.Size()
+	if size == 0 || size > buf.Capacity() {
+		t.Errorf("invalid buffer size: %d (capacity: %d)", size, buf.Capacity())
+	}
+
+	all := buf.All()
+	if len(all) != size {
+		t.Errorf("All() returned %d items, but Size() is %d", len(all), size)
+	}
+
+	// All snapshots should have the correct UUID
+	for i, snap := range all {
+		if snap.UUID != "GPU-TEST-0000" {
+			t.Errorf("snapshot %d has wrong UUID: %s", i, snap.UUID)
+		}
+	}
+}

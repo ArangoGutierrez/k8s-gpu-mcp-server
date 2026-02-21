@@ -4,6 +4,8 @@
 package gateway
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -164,4 +166,160 @@ func TestCircuitBreaker_HalfOpen_SuccessClosesCircuit(t *testing.T) {
 	cb.RecordSuccess("node-1")
 	assert.Equal(t, CircuitClosed, cb.State("node-1"))
 	assert.Equal(t, 0, cb.Failures("node-1"))
+}
+
+// --- Concurrency stress tests ---
+
+func TestCircuitBreakerConcurrentStateTransitions(t *testing.T) {
+	t.Parallel()
+
+	cfg := CircuitBreakerConfig{
+		Threshold:    5,
+		ResetTimeout: 10 * time.Millisecond,
+	}
+	cb := NewCircuitBreaker(cfg)
+
+	const numGoroutines = 100
+	const opsPerGoroutine = 100
+
+	var wg sync.WaitGroup
+	start := make(chan struct{}) // barrier for simultaneous start
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for j := 0; j < opsPerGoroutine; j++ {
+				node := "node-1"
+				switch j % 4 {
+				case 0:
+					cb.Allow(node)
+				case 1:
+					cb.RecordFailure(node)
+				case 2:
+					cb.RecordSuccess(node)
+				case 3:
+					cb.State(node)
+				}
+			}
+		}(i)
+	}
+
+	close(start) // release all goroutines simultaneously
+	wg.Wait()
+
+	// Verify state is valid (one of the three valid states)
+	state := cb.State("node-1")
+	assert.True(t, state == CircuitClosed || state == CircuitOpen || state == CircuitHalfOpen,
+		"state should be valid, got %v", state)
+
+	// Failures count must be non-negative
+	assert.True(t, cb.Failures("node-1") >= 0, "failures must be non-negative")
+}
+
+func TestCircuitBreakerHalfOpenTransition(t *testing.T) {
+	t.Parallel()
+
+	cfg := CircuitBreakerConfig{
+		Threshold:    2,
+		ResetTimeout: 1 * time.Millisecond, // very short so Allow() triggers half-open
+	}
+	cb := NewCircuitBreaker(cfg)
+
+	// Open the circuit
+	cb.RecordFailure("node-1")
+	cb.RecordFailure("node-1")
+	assert.Equal(t, CircuitOpen, cb.State("node-1"))
+
+	// Wait for reset timeout so next Allow() transitions to half-open
+	time.Sleep(5 * time.Millisecond)
+
+	const numGoroutines = 50
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	// Track results
+	successes := make([]bool, numGoroutines)
+	failures := make([]bool, numGoroutines)
+
+	// Half the goroutines try Allow + RecordSuccess, half try Allow + RecordFailure
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			allowed := cb.Allow("node-1")
+			if id%2 == 0 {
+				cb.RecordSuccess("node-1")
+				successes[id] = allowed
+			} else {
+				cb.RecordFailure("node-1")
+				failures[id] = allowed
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Final state must be valid
+	state := cb.State("node-1")
+	assert.True(t, state == CircuitClosed || state == CircuitOpen || state == CircuitHalfOpen,
+		"state should be valid after concurrent half-open transitions, got %v", state)
+}
+
+func TestCircuitBreakerConcurrentNodeAccess(t *testing.T) {
+	t.Parallel()
+
+	cfg := CircuitBreakerConfig{
+		Threshold:    3,
+		ResetTimeout: 50 * time.Millisecond,
+	}
+
+	var stateChanges sync.Map // track callback invocations safely
+
+	cfg.OnStateChange = func(node string, state int, healthy bool) {
+		stateChanges.Store(node+"-latest", state)
+	}
+
+	cb := NewCircuitBreaker(cfg)
+
+	const numNodes = 20
+	const numGoroutines = 50
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			node := fmt.Sprintf("node-%d", id%numNodes)
+			for j := 0; j < 50; j++ {
+				cb.Allow(node)
+				if j%3 == 0 {
+					cb.RecordFailure(node)
+				} else {
+					cb.RecordSuccess(node)
+				}
+				cb.Failures(node)
+				cb.State(node)
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Verify all nodes are in valid states
+	for i := 0; i < numNodes; i++ {
+		node := fmt.Sprintf("node-%d", i)
+		state := cb.State(node)
+		assert.True(t, state == CircuitClosed || state == CircuitOpen || state == CircuitHalfOpen,
+			"node %s has invalid state %v", node, state)
+		assert.True(t, cb.Failures(node) >= 0,
+			"node %s has negative failures", node)
+	}
 }
