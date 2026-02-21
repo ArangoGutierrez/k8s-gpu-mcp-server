@@ -168,7 +168,7 @@ Then ask Claude: *"What's the temperature of the GPUs?"*
          ▼                   ▼                   ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
 │  Agent (Node 1) │  │  Agent (Node 2) │  │  Agent (Node N) │
-│  5 MCP Tools    │  │  5 MCP Tools    │  │  5 MCP Tools    │
+│  9 MCP Tools    │  │  9 MCP Tools    │  │  9 MCP Tools    │
 │  NVML → GPU     │  │  NVML → GPU     │  │  NVML → GPU     │
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 ```
@@ -185,19 +185,24 @@ Then ask Claude: *"What's the temperature of the GPUs?"*
 
 ## 🛠️ Available Tools
 
-| Tool | Description | Status |
-|------|-------------|--------|
-| `get_gpu_inventory` | Hardware inventory + telemetry | ✅ Available |
-| `get_gpu_health` | GPU health monitoring with scoring | ✅ Available |
-| `analyze_xid_errors` | Parse GPU XID error codes from kernel logs | ✅ Available |
-| `describe_gpu_node` | Node-level GPU diagnostics with K8s metadata | ✅ Available |
-| `get_pod_gpu_allocation` | GPU-to-Pod correlation via resource requests | ✅ Available |
-| `kill_gpu_process` | Terminate GPU process | 🚧 M4 (Operator) |
-| `reset_gpu` | GPU reset | 🚧 M4 (Operator) |
+| Tool | Description | Category | Status |
+|------|-------------|----------|--------|
+| `get_gpu_inventory` | Hardware inventory + telemetry | NVML | ✅ Available |
+| `get_gpu_health` | GPU health monitoring with scoring | NVML | ✅ Available |
+| `analyze_xid_errors` | Parse GPU XID error codes from kernel logs | NVML | ✅ Available |
+| `get_nvlink_topology` | NVLink interconnect topology and health | NVML | ✅ Available |
+| `get_gpu_timeline` | Historical GPU metrics from flight recorder | NVML + Blackbox | ✅ Available |
+| `describe_gpu_node` | Node-level GPU diagnostics with K8s metadata | K8s + NVML | ✅ Available |
+| `get_pod_gpu_allocation` | GPU-to-Pod correlation via resource requests | K8s | ✅ Available |
+| `explain_failure` | Root cause analysis for failed GPU workloads | K8s + Incidents | ✅ Available |
+| `get_incident_report` | Detailed incident report with timeline and snapshots | K8s + Incidents | ✅ Available |
+| `kill_gpu_process` | Terminate GPU process | Operator | 🚧 M4 (Operator) |
+| `reset_gpu` | GPU reset | Operator | 🚧 M4 (Operator) |
 
 ### 📋 Available Prompts
 
-MCP Prompts provide guided diagnostic workflows that orchestrate multiple tools:
+MCP Prompts provide guided diagnostic workflows that orchestrate multiple tools.
+See [`pkg/prompts/prompts.go`](pkg/prompts/prompts.go) for prompt definitions.
 
 | Prompt | Description |
 |--------|-------------|
@@ -213,6 +218,26 @@ Claude: [Executes gpu-triage prompt]
         → Calls get_gpu_inventory, get_gpu_health, analyze_xid_errors
         → Returns structured triage report with recommendations
 ```
+
+### 🔒 Operation Modes
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| **Read-Only** (default) | `--mode=read-only` | All diagnostic tools, no mutations |
+| **Operator** | `--mode=operator` | Enables future mutating operations (kill process, reset GPU) |
+
+Read-only mode is the default and recommended for most use cases. Operator mode
+enables future M4 tools that perform write operations on GPUs.
+
+### 📼 Flight Recorder
+
+The agent includes a built-in flight recorder (`pkg/blackbox`) that continuously
+captures GPU telemetry (temperature, power, utilization, memory) into per-GPU
+ring buffers. This enables tools like `get_gpu_timeline` and `get_incident_report`
+to query historical GPU metrics around the time of a failure.
+
+The flight recorder starts automatically with the agent and requires no additional
+configuration. Data is retained in memory for the configured window (default: 30 minutes).
 
 📖 **[MCP Usage Guide →](docs/mcp-usage.md)**
 
