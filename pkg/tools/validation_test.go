@@ -91,6 +91,57 @@ func TestIsValidNodeName(t *testing.T) {
 			input: "node..name",
 			want:  false,
 		},
+		// FieldSelector injection payloads
+		{
+			name:  "field selector injection with comma",
+			input: "node-1,spec.status.phase=Failed",
+			want:  false,
+		},
+		{
+			name:  "SQL injection attempt with semicolon",
+			input: "node-1;drop table",
+			want:  false,
+		},
+		{
+			name:  "field selector injection with equals",
+			input: "node-1=value",
+			want:  false,
+		},
+		{
+			name:  "newline injection",
+			input: "node-1\nmalicious",
+			want:  false,
+		},
+		{
+			name:  "null byte injection",
+			input: "node-1\x00malicious",
+			want:  false,
+		},
+		{
+			name:  "backtick injection",
+			input: "node-1`whoami`",
+			want:  false,
+		},
+		{
+			name:  "dollar sign injection",
+			input: "node-1$(id)",
+			want:  false,
+		},
+		{
+			name:  "pipe injection",
+			input: "node-1|cat /etc/passwd",
+			want:  false,
+		},
+		{
+			name:  "ampersand injection",
+			input: "node-1&& rm -rf /",
+			want:  false,
+		},
+		{
+			name:  "curly brace injection",
+			input: "node-1{bad}",
+			want:  false,
+		},
 	}
 
 	for _, tt := range tests {
