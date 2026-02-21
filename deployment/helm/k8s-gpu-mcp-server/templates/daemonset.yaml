@@ -137,6 +137,10 @@ spec:
         - "--dcgm-profiling=true"
         {{- end }}
         {{- end }}
+        {{- if and .Values.tls.enabled .Values.tls.secretName }}
+        - "--tls-cert-file=/etc/tls/agent/tls.crt"
+        - "--tls-key-file=/etc/tls/agent/tls.key"
+        {{- end }}
         ports:
         - name: http
           containerPort: {{ .Values.transport.http.port }}
@@ -145,12 +149,18 @@ spec:
           httpGet:
             path: /healthz
             port: http
+            {{- if and .Values.tls.enabled .Values.tls.secretName }}
+            scheme: HTTPS
+            {{- end }}
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /readyz
             port: http
+            {{- if and .Values.tls.enabled .Values.tls.secretName }}
+            scheme: HTTPS
+            {{- end }}
           initialDelaySeconds: 5
           periodSeconds: 10
         {{- else }}
@@ -207,7 +217,7 @@ spec:
           {{- /* RuntimeClass: No GPU resource request - monitors all GPUs */}}
           {{- toYaml .Values.resources | nindent 10 }}
           {{- end }}
-        {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled (and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external")) }}
+        {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled (and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external")) (and .Values.tls.enabled .Values.tls.secretName) }}
         volumeMounts:
         {{- if .Values.xidAnalysis.enabled }}
         - name: kmsg
@@ -225,8 +235,13 @@ spec:
           mountPath: {{ dir .Values.agent.dcgm.socket }}
           readOnly: true
         {{- end }}
+        {{- if and .Values.tls.enabled .Values.tls.secretName }}
+        - name: tls-certs
+          mountPath: /etc/tls/agent
+          readOnly: true
         {{- end }}
-      {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled (and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external")) }}
+        {{- end }}
+      {{- if or .Values.xidAnalysis.enabled .Values.processTracking.enabled (and .Values.agent.dcgm.enabled (eq .Values.agent.dcgm.mode "external")) (and .Values.tls.enabled .Values.tls.secretName) }}
       volumes:
       {{- if .Values.xidAnalysis.enabled }}
       - name: kmsg
@@ -248,6 +263,11 @@ spec:
         hostPath:
           path: {{ dir .Values.agent.dcgm.socket }}
           type: Directory
+      {{- end }}
+      {{- if and .Values.tls.enabled .Values.tls.secretName }}
+      - name: tls-certs
+        secret:
+          secretName: {{ .Values.tls.secretName }}
       {{- end }}
       {{- end }}
 

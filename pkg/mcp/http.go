@@ -6,7 +6,9 @@ package mcp
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -32,6 +34,7 @@ type HTTPServer struct {
 	ready            chan struct{}
 	nvmlChecker      NVMLChecker
 	metricsAuthToken string
+	tlsConfig        *TLSConfig
 }
 
 // NewHTTPServer creates an HTTP transport server.
@@ -54,6 +57,12 @@ func (h *HTTPServer) SetNVMLChecker(checker NVMLChecker) {
 // compatibility. When set, requests must include "Authorization: Bearer <token>".
 func (h *HTTPServer) SetMetricsAuthToken(token string) {
 	h.metricsAuthToken = token
+}
+
+// SetTLSConfig sets the TLS configuration. When set and enabled,
+// the server listens on HTTPS instead of HTTP.
+func (h *HTTPServer) SetTLSConfig(cfg *TLSConfig) {
+	h.tlsConfig = cfg
 }
 
 // ListenAndServe starts the HTTP server.
@@ -104,7 +113,24 @@ func (h *HTTPServer) ListenAndServe(ctx context.Context) error {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	klog.InfoS("HTTP server starting", "addr", h.addr)
+	// Configure TLS if enabled
+	useTLS := h.tlsConfig != nil && h.tlsConfig.Enabled()
+	if useTLS {
+		reloader, err := newCertReloader(h.tlsConfig.CertFile, h.tlsConfig.KeyFile)
+		if err != nil {
+			return fmt.Errorf("TLS setup: %w", err)
+		}
+		h.httpServer.TLSConfig = &tls.Config{
+			GetCertificate: reloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+	}
+
+	proto := "HTTP"
+	if useTLS {
+		proto = "HTTPS"
+	}
+	klog.InfoS(proto+" server starting", "addr", h.addr, "tls", useTLS)
 
 	// Create listener first to verify the address is available.
 	// This prevents the race condition where close(h.ready) is called
@@ -112,6 +138,11 @@ func (h *HTTPServer) ListenAndServe(ctx context.Context) error {
 	ln, err := net.Listen("tcp", h.addr)
 	if err != nil {
 		return err
+	}
+
+	// Wrap with TLS listener when TLS is enabled
+	if useTLS {
+		ln = tls.NewListener(ln, h.httpServer.TLSConfig)
 	}
 
 	// Start server in goroutine using the pre-created listener

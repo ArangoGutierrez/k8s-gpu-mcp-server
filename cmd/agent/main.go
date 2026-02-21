@@ -82,6 +82,12 @@ func main() {
 		// Oneshot mode for exec-based invocations
 		oneshot = flag.Int("oneshot", 0,
 			"Exit after processing N requests (0=disabled, 2=init+tool)")
+
+		// TLS flags
+		tlsCertFile = flag.String("tls-cert-file", "",
+			"Path to TLS certificate PEM file (enables HTTPS when set)")
+		tlsKeyFile = flag.String("tls-key-file", "",
+			"Path to TLS private key PEM file (required with --tls-cert-file)")
 	)
 	flag.Parse()
 
@@ -149,6 +155,27 @@ func main() {
 		transport = mcp.TransportStdio
 	}
 
+	// Resolve TLS configuration from flags and env vars.
+	// Environment variables take precedence over flags.
+	tlsCfg := &mcp.TLSConfig{
+		CertFile: *tlsCertFile,
+		KeyFile:  *tlsKeyFile,
+	}
+	if envCert := os.Getenv("TLS_CERT_FILE"); envCert != "" {
+		tlsCfg.CertFile = envCert
+	}
+	if envKey := os.Getenv("TLS_KEY_FILE"); envKey != "" {
+		tlsCfg.KeyFile = envKey
+	}
+	if err := tlsCfg.Validate(); err != nil {
+		klog.ErrorS(err, "invalid TLS configuration")
+		klog.Flush()
+		os.Exit(1)
+	}
+	if tlsCfg.Enabled() {
+		klog.InfoS("TLS enabled", "certFile", tlsCfg.CertFile, "keyFile", tlsCfg.KeyFile)
+	}
+
 	// Log startup information to stderr (structured)
 	if *gatewayMode {
 		klog.InfoS("starting k8s-gpu-mcp-server",
@@ -197,6 +224,7 @@ func main() {
 		Namespace:   *namespace,
 		Oneshot:     *oneshot,
 		RoutingMode: *routingMode,
+		TLS:         tlsCfg,
 	}
 
 	if *gatewayMode {
