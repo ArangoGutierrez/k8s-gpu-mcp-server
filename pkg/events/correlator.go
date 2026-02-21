@@ -240,6 +240,10 @@ func (c *Correlator) Correlate(ctx context.Context, trigger Event) *CorrelatedIn
 	// 3. Get GPU snapshots around trigger time
 	c.gatherGPUSnapshots(ctx, incident, windowStart, windowEnd)
 
+	if ctx.Err() != nil {
+		return incident
+	}
+
 	// 4. Build sorted timeline
 	incident.Timeline = c.buildTimeline(incident)
 
@@ -364,7 +368,28 @@ func (c *Correlator) buildTimeline(incident *CorrelatedIncident) []TimelineEntry
 	}
 
 	// Add GPU snapshot events (throttling, ECC, high temp)
-	for _, snap := range incident.GPUSnapshots {
+	entries = append(entries, buildGPUSnapshotEntries(
+		incident.GPUSnapshots, triggerTime)...)
+
+	// Sort by timestamp
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Timestamp.Before(entries[j].Timestamp)
+	})
+
+	// Deduplicate consecutive entries with same type and description
+	entries = deduplicateTimeline(entries)
+
+	return entries
+}
+
+// buildGPUSnapshotEntries converts GPU snapshots into timeline entries for
+// throttling, ECC errors, and high temperature conditions.
+func buildGPUSnapshotEntries(
+	snapshots []blackbox.GPUSnapshot,
+	triggerTime time.Time,
+) []TimelineEntry {
+	var entries []TimelineEntry
+	for _, snap := range snapshots {
 		if snap.IsThrottled() {
 			entries = append(entries, TimelineEntry{
 				Timestamp:    snap.Timestamp,
@@ -393,15 +418,6 @@ func (c *Correlator) buildTimeline(incident *CorrelatedIncident) []TimelineEntry
 			})
 		}
 	}
-
-	// Sort by timestamp
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Timestamp.Before(entries[j].Timestamp)
-	})
-
-	// Deduplicate consecutive entries with same type and description
-	entries = deduplicateTimeline(entries)
-
 	return entries
 }
 

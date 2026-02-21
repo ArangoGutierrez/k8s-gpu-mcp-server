@@ -514,27 +514,43 @@ func (h *GPUHealthHandler) checkECCErrors(
 		}
 	}
 
-	// Get error counts; log errors, use 0 as fallback
+	// Get error counts; report "unavailable" when query fails instead of
+	// silently returning 0 which could mask GPU failures.
 	var correctable, uncorrectable uint64
+	correctableAvailable := true
+	uncorrectableAvailable := true
 	if val, err := device.GetTotalEccErrors(ctx, nvml.EccErrorCorrectable); err != nil {
 		klog.V(2).InfoS("failed to get correctable ECC errors", "error", err)
+		correctableAvailable = false
 	} else {
 		correctable = val
 	}
 	if val, err := device.GetTotalEccErrors(ctx, nvml.EccErrorUncorrectable); err != nil {
 		klog.V(2).InfoS("failed to get uncorrectable ECC errors", "error", err)
+		uncorrectableAvailable = false
 	} else {
 		uncorrectable = val
+	}
+
+	// If neither error count is available, report unknown status
+	if !correctableAvailable && !uncorrectableAvailable {
+		return ECCHealth{
+			Enabled: true,
+			Status:  "data_unavailable",
+		}
 	}
 
 	// Determine status based on error counts
 	var status string
 	switch {
-	case uncorrectable > 0:
+	case uncorrectableAvailable && uncorrectable > 0:
 		status = "critical"
-	case correctable > eccCorrectableThreshold:
+	case !uncorrectableAvailable:
+		// Uncorrectable count unavailable — cannot confirm healthy
+		status = "degraded"
+	case correctableAvailable && correctable > eccCorrectableThreshold:
 		status = "warning"
-	case correctable > 0:
+	case correctableAvailable && correctable > 0:
 		status = "degraded"
 	default:
 		status = "healthy"
@@ -561,15 +577,17 @@ func (h *GPUHealthHandler) checkPerformance(
 		}
 	}
 
-	// Get clock frequencies; log errors, use 0 as fallback
+	// Get clock frequencies; report actual values or leave as 0 with a log.
+	// A 0 value here means the data was unavailable, not that the clock is
+	// stopped. Consumers should check the status field for "unknown".
 	var smClock, memClock uint32
 	if val, err := device.GetClockInfo(ctx, nvml.ClockGraphics); err != nil {
-		klog.V(2).InfoS("failed to get SM clock", "error", err)
+		klog.V(2).InfoS("failed to get SM clock, data unavailable", "error", err)
 	} else {
 		smClock = val
 	}
 	if val, err := device.GetClockInfo(ctx, nvml.ClockMemory); err != nil {
-		klog.V(2).InfoS("failed to get memory clock", "error", err)
+		klog.V(2).InfoS("failed to get memory clock, data unavailable", "error", err)
 	} else {
 		memClock = val
 	}
@@ -593,14 +611,26 @@ func (h *GPUHealthHandler) checkPerformance(
 	}
 }
 
-// calculateHealthScore computes a weighted health score (0-100).
+// calculateHealthScore computes a weighted health score (0-100) by
+// delegating to component-specific scorers.
 func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 	score := 100
+	score -= h.scoreThermal(health)
+	score -= h.scoreMemory(health)
+	score -= h.scorePower(health)
+	score -= h.scoreThrottling(health)
+	score -= h.scoreECC(health)
 
-	// Temperature impact (max -30 points)
+	if score < 0 {
+		score = 0
+	}
+	return score
+}
+
+// scoreThermal returns the penalty (0-30) for temperature issues.
+func (h *GPUHealthHandler) scoreThermal(health *GPUHealthStatus) int {
 	switch health.Temperature.Status {
 	case "critical":
-		score -= 30
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:  "critical",
 			Component: "temperature",
@@ -608,8 +638,8 @@ func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 				health.Temperature.Current),
 			Suggestion: "Check cooling system, reduce workload immediately",
 		})
+		return 30
 	case "high":
-		score -= 20
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:  "warning",
 			Component: "temperature",
@@ -617,14 +647,17 @@ func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 				health.Temperature.Current),
 			Suggestion: "Monitor temperature, check cooling",
 		})
+		return 20
 	case "elevated":
-		score -= 10
+		return 10
 	}
+	return 0
+}
 
-	// Memory usage impact (max -20 points)
+// scoreMemory returns the penalty (0-20) for memory usage issues.
+func (h *GPUHealthHandler) scoreMemory(health *GPUHealthStatus) int {
 	switch health.Memory.Status {
 	case "critical":
-		score -= 20
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:  "critical",
 			Component: "memory",
@@ -632,8 +665,8 @@ func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 				health.Memory.UsedPercent),
 			Suggestion: "Free GPU memory or reduce workload",
 		})
+		return 20
 	case "high":
-		score -= 10
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:  "warning",
 			Component: "memory",
@@ -641,45 +674,54 @@ func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 				health.Memory.UsedPercent),
 			Suggestion: "Consider freeing GPU memory",
 		})
+		return 10
 	}
+	return 0
+}
 
-	// Power usage impact (max -15 points)
+// scorePower returns the penalty (0-15) for power usage issues.
+func (h *GPUHealthHandler) scorePower(health *GPUHealthStatus) int {
 	switch health.Power.Status {
 	case "over_limit":
-		score -= 15
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:   "warning",
 			Component:  "power",
 			Message:    "GPU power exceeds TDP limit",
 			Suggestion: "Check power supply and cooling",
 		})
+		return 15
 	case "high":
-		score -= 10
+		return 10
 	}
+	return 0
+}
 
-	// Throttling impact (max -25 points)
+// scoreThrottling returns the penalty (0-25) for throttling issues.
+func (h *GPUHealthHandler) scoreThrottling(health *GPUHealthStatus) int {
 	switch health.Throttling.Status {
 	case "severe":
-		score -= 25
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:   "critical",
 			Component:  "throttling",
 			Message:    "GPU severely throttled",
 			Suggestion: "Investigate thermal or power issues",
 		})
+		return 25
 	case "minor":
-		score -= 10
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:   "warning",
 			Component:  "throttling",
 			Message:    "GPU experiencing minor throttling",
 			Suggestion: "Monitor for performance impact",
 		})
+		return 10
 	}
+	return 0
+}
 
-	// ECC errors impact (max -30 points)
+// scoreECC returns the penalty (0-30) for ECC error issues.
+func (h *GPUHealthHandler) scoreECC(health *GPUHealthStatus) int {
 	if health.ECCErrors.TotalUncorrectableErrors > 0 {
-		score -= 30
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:  "critical",
 			Component: "ecc",
@@ -687,8 +729,9 @@ func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 				health.ECCErrors.TotalUncorrectableErrors),
 			Suggestion: "GPU may have hardware failure, drain node",
 		})
-	} else if health.ECCErrors.TotalCorrectableErrors > eccCorrectableThreshold {
-		score -= 10
+		return 30
+	}
+	if health.ECCErrors.TotalCorrectableErrors > eccCorrectableThreshold {
 		health.Issues = append(health.Issues, HealthIssue{
 			Severity:  "warning",
 			Component: "ecc",
@@ -696,13 +739,9 @@ func (h *GPUHealthHandler) calculateHealthScore(health *GPUHealthStatus) int {
 				health.ECCErrors.TotalCorrectableErrors),
 			Suggestion: "Monitor for increasing error rate",
 		})
+		return 10
 	}
-
-	if score < 0 {
-		score = 0
-	}
-
-	return score
+	return 0
 }
 
 // determineStatus classifies health based on score and issues.

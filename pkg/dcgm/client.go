@@ -117,7 +117,7 @@ func (c *Client) Disconnect() error {
 // Currently returns ErrNotInitialized - callers should use Disconnect + Connect.
 func (c *Client) Reconnect(ctx context.Context) error {
 	if !c.connected.Load() {
-		return ErrNotInitialized
+		return ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 	// Already connected, no-op
 	return nil
@@ -134,7 +134,7 @@ func (c *Client) WatchFields(gpuID int, fields []FieldID, interval time.Duration
 	defer c.mu.Unlock()
 
 	if !c.connected.Load() {
-		return ErrNotInitialized
+		return ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	if interval < 100*time.Millisecond {
@@ -169,7 +169,7 @@ func (c *Client) GetLatestValues(gpuID int, fields []FieldID) (map[FieldID]Value
 	defer c.mu.RUnlock()
 
 	if !c.connected.Load() {
-		return nil, ErrNotInitialized
+		return nil, ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	// TODO(#163): Implement actual DCGM value retrieval.
@@ -208,7 +208,7 @@ func (c *Client) GetProfilingMetrics(gpuID int) (*ProfilingMetrics, error) {
 	defer c.mu.RUnlock()
 
 	if !c.connected.Load() {
-		return nil, ErrNotInitialized
+		return nil, ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	// TODO(#163): Implement actual DCGM profiling query.
@@ -217,7 +217,7 @@ func (c *Client) GetProfilingMetrics(gpuID int) (*ProfilingMetrics, error) {
 	// 2. Profiling fields are being watched
 	// 3. Query DCGM_FI_PROF_* fields
 	//
-	// For now, return unavailable.
+	// TODO(#163): placeholder — return unavailable until real DCGM bindings.
 	return nil, ErrProfilingUnavailable
 }
 
@@ -227,7 +227,7 @@ func (c *Client) GetNVSwitchStatus() (*NVSwitchStatus, error) {
 	defer c.mu.RUnlock()
 
 	if !c.connected.Load() {
-		return nil, ErrNotInitialized
+		return nil, ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	// TODO(#163): Implement actual NVSwitch query.
@@ -235,7 +235,7 @@ func (c *Client) GetNVSwitchStatus() (*NVSwitchStatus, error) {
 	// 1. NVSwitch hardware present
 	// 2. dcgm.GetNvSwitchStatus()
 	//
-	// For now, return not available.
+	// TODO(#163): placeholder — return not available until real DCGM bindings.
 	return &NVSwitchStatus{Available: false}, nil
 }
 
@@ -245,7 +245,7 @@ func (c *Client) SetHealthPolicy(policy HealthPolicy) error {
 	defer c.mu.Unlock()
 
 	if !c.connected.Load() {
-		return ErrNotInitialized
+		return ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	if err := policy.Validate(); err != nil {
@@ -271,13 +271,13 @@ func (c *Client) GetHealthViolations() ([]HealthViolation, error) {
 	defer c.mu.RUnlock()
 
 	if !c.connected.Load() {
-		return nil, ErrNotInitialized
+		return nil, ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	// TODO(#163): Implement actual DCGM health check.
 	// dcgm.GetHealthViolations()
 	//
-	// For now, return empty slice.
+	// TODO(#163): placeholder — return empty until real DCGM bindings.
 	return []HealthViolation{}, nil
 }
 
@@ -287,14 +287,14 @@ func (c *Client) GetXIDErrors(gpuID int, since time.Time) ([]XIDError, error) {
 	defer c.mu.RUnlock()
 
 	if !c.connected.Load() {
-		return nil, ErrNotInitialized
+		return nil, ErrNotInitialized // TODO(#163): placeholder — no real DCGM bindings
 	}
 
 	// TODO(#163): Implement actual DCGM XID query.
 	// Uses DCGM_FI_DEV_XID_ERRORS field.
 	// This provides native XID detection without /dev/kmsg parsing.
 	//
-	// For now, return empty slice.
+	// TODO(#163): placeholder — return empty until real DCGM bindings.
 	return []XIDError{}, nil
 }
 
