@@ -608,6 +608,520 @@ func TestKnownPatterns_WeightsValid(t *testing.T) {
 	}
 }
 
+// --- Indicator-level tests for under-covered paths ---
+
+func TestCheckIndicator_XIDPresent(t *testing.T) {
+	a := NewAnalyzer()
+	ctx := &analysisContext{xidCodes: []int{79}}
+	ctxEmpty := &analysisContext{}
+
+	// Positive: XID codes are present
+	matched, ev := a.checkIndicator(Indicator{
+		Type: IndicatorTypeXID, Condition: ConditionPresent, Weight: 0.5,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for XID present with codes")
+	}
+	if ev == "" {
+		t.Error("expected non-empty evidence")
+	}
+
+	// Negative: no XID codes
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeXID, Condition: ConditionPresent, Weight: 0.5,
+	}, ctxEmpty)
+	if matched {
+		t.Error("expected no match for XID present without codes")
+	}
+}
+
+func TestCheckIndicator_XIDNotPresent(t *testing.T) {
+	a := NewAnalyzer()
+	ctxEmpty := &analysisContext{}
+	ctxWithXID := &analysisContext{xidCodes: []int{48}}
+
+	// Positive: no XID codes
+	matched, _ := a.checkIndicator(Indicator{
+		Type: IndicatorTypeXID, Condition: ConditionNotPresent, Weight: 0.1,
+	}, ctxEmpty)
+	if !matched {
+		t.Error("expected match for XID not_present with empty codes")
+	}
+
+	// Negative: XID codes present
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeXID, Condition: ConditionNotPresent, Weight: 0.1,
+	}, ctxWithXID)
+	if matched {
+		t.Error("expected no match for XID not_present when codes exist")
+	}
+}
+
+func TestCheckIndicator_XIDIn_Negative(t *testing.T) {
+	a := NewAnalyzer()
+	// XID code 99 not in the target set
+	ctx := &analysisContext{xidCodes: []int{99}}
+	matched, _ := a.checkIndicator(Indicator{
+		Type: IndicatorTypeXID, Condition: ConditionIn, Value: []int{48, 63, 64}, Weight: 0.5,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for XID not in target set")
+	}
+}
+
+func TestCheckIndicator_TempLessThan(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: temp below threshold
+	ctx := &analysisContext{temperature: 40}
+	matched, ev := a.checkIndicator(Indicator{
+		Type: IndicatorTypeTemp, Condition: ConditionLessThan, Value: uint32(50), Weight: 0.3,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for temp < 50 when temp is 40")
+	}
+	if ev == "" {
+		t.Error("expected non-empty evidence")
+	}
+
+	// Negative: temp above threshold
+	ctx = &analysisContext{temperature: 60}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeTemp, Condition: ConditionLessThan, Value: uint32(50), Weight: 0.3,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for temp < 50 when temp is 60")
+	}
+}
+
+func TestCheckIndicator_ECCEquals(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: exact match
+	ctx := &analysisContext{eccUncorrectable: 5}
+	matched, _ := a.checkIndicator(Indicator{
+		Type: IndicatorTypeECC, Condition: ConditionEquals, Value: uint64(5), Weight: 0.4,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for ECC equals 5")
+	}
+
+	// Negative: no match
+	ctx = &analysisContext{eccUncorrectable: 3}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeECC, Condition: ConditionEquals, Value: uint64(5), Weight: 0.4,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for ECC equals 5 when count is 3")
+	}
+}
+
+func TestCheckIndicator_ThrottleNotPresent(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: no throttling
+	ctx := &analysisContext{throttleReasons: 0}
+	matched, ev := a.checkIndicator(Indicator{
+		Type: IndicatorTypeThrottle, Condition: ConditionNotPresent, Weight: 0.1,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for throttle not_present when no throttling")
+	}
+	if ev == "" {
+		t.Error("expected non-empty evidence")
+	}
+
+	// Negative: throttling active
+	ctx = &analysisContext{throttleReasons: 0x08}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeThrottle, Condition: ConditionNotPresent, Weight: 0.1,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for throttle not_present when throttling")
+	}
+}
+
+func TestCheckIndicator_ThrottlePresent_WithThermalValue(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: thermal throttle string
+	ctx := &analysisContext{throttleReasons: 0x01}
+	matched, ev := a.checkIndicator(Indicator{
+		Type: IndicatorTypeThrottle, Condition: ConditionPresent, Value: "hw_thermal", Weight: 0.3,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for thermal throttle present")
+	}
+	if !strings.Contains(ev, "Thermal") {
+		t.Errorf("expected evidence to mention Thermal, got %q", ev)
+	}
+}
+
+func TestCheckIndicator_K8sEventEquals(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: exact reason match (case-insensitive)
+	ctx := &analysisContext{k8sReasons: []string{"OOMKilled"}}
+	matched, _ := a.checkIndicator(Indicator{
+		Type: IndicatorTypeK8sEvent, Condition: ConditionEquals, Value: "OOMKilled", Weight: 0.35,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for K8s event equals OOMKilled")
+	}
+
+	// Negative: different reason
+	ctx = &analysisContext{k8sReasons: []string{"Scheduled"}}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeK8sEvent, Condition: ConditionEquals, Value: "OOMKilled", Weight: 0.35,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for K8s event equals OOMKilled when reason is Scheduled")
+	}
+}
+
+func TestCheckIndicator_K8sEventContains_MessagePath(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Match via message (not reason) — exercises the message search path
+	ctx := &analysisContext{
+		k8sReasons:  []string{"Failed"},
+		k8sMessages: []string{"NVLink interconnect error detected"},
+	}
+	matched, _ := a.checkIndicator(Indicator{
+		Type: IndicatorTypeK8sEvent, Condition: ConditionContains, Value: "nvlink", Weight: 0.3,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for K8s event message containing 'nvlink'")
+	}
+
+	// Negative: no match in either reasons or messages
+	ctx = &analysisContext{
+		k8sReasons:  []string{"Scheduled"},
+		k8sMessages: []string{"Pod scheduled successfully"},
+	}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeK8sEvent, Condition: ConditionContains, Value: "OOMKilled", Weight: 0.3,
+	}, ctx)
+	if matched {
+		t.Error("expected no match when K8s events don't contain search string")
+	}
+}
+
+func TestCheckIndicator_MemUtilLessThan(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: low memory utilization
+	ctx := &analysisContext{memUtilPercent: 10.0}
+	matched, ev := a.checkIndicator(Indicator{
+		Type: IndicatorTypeMemUtil, Condition: ConditionLessThan, Value: float64(50.0), Weight: 0.2,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for memUtil < 50 when at 10%")
+	}
+	if ev == "" {
+		t.Error("expected non-empty evidence")
+	}
+
+	// Negative: high memory utilization
+	ctx = &analysisContext{memUtilPercent: 80.0}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeMemUtil, Condition: ConditionLessThan, Value: float64(50.0), Weight: 0.2,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for memUtil < 50 when at 80%")
+	}
+}
+
+func TestCheckIndicator_CausalityContains(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Positive: causality contains substring
+	ctx := &analysisContext{causality: "thermal_cascade"}
+	matched, _ := a.checkIndicator(Indicator{
+		Type: IndicatorTypeCausality, Condition: ConditionContains, Value: "thermal", Weight: 0.25,
+	}, ctx)
+	if !matched {
+		t.Error("expected match for causality containing 'thermal'")
+	}
+
+	// Negative: causality doesn't contain substring
+	ctx = &analysisContext{causality: "memory_failure"}
+	matched, _ = a.checkIndicator(Indicator{
+		Type: IndicatorTypeCausality, Condition: ConditionContains, Value: "thermal", Weight: 0.25,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for causality 'memory_failure' containing 'thermal'")
+	}
+}
+
+func TestCheckIndicator_UnknownType(t *testing.T) {
+	a := NewAnalyzer()
+	ctx := &analysisContext{}
+	matched, ev := a.checkIndicator(Indicator{
+		Type: "nonexistent_type", Condition: ConditionEquals, Value: 1, Weight: 0.5,
+	}, ctx)
+	if matched {
+		t.Error("expected no match for unknown indicator type")
+	}
+	if ev != "" {
+		t.Errorf("expected empty evidence for unknown type, got %q", ev)
+	}
+}
+
+// --- Extract helper edge-case tests ---
+
+func TestExtractGPUUUID_FromSnapshot(t *testing.T) {
+	a := NewAnalyzer()
+
+	// UUID from GPU snapshot (when trigger has no UUID)
+	incident := &events.CorrelatedIncident{
+		ID: "test-uuid-snap",
+		Trigger: events.Event{
+			Type: "k8s",
+			Data: events.K8sEvent{Reason: "Failed"},
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{UUID: "GPU-SNAP-UUID-001"},
+		},
+	}
+	report := a.Analyze(incident)
+	if report.GPUUUID != "GPU-SNAP-UUID-001" {
+		t.Errorf("expected UUID from snapshot, got %q", report.GPUUUID)
+	}
+}
+
+func TestExtractGPUUUID_FromRelatedXIDEvent(t *testing.T) {
+	a := NewAnalyzer()
+
+	// UUID from related XID event (trigger and snapshots have no UUID)
+	incident := &events.CorrelatedIncident{
+		ID: "test-uuid-related",
+		Trigger: events.Event{
+			Type: "k8s",
+			Data: events.K8sEvent{Reason: "Failed"},
+		},
+		RelatedEvents: []events.Event{
+			{
+				Type: "xid",
+				Data: xid.XIDEvent{XIDCode: 48, GPUUUID: "GPU-RELATED-UUID"},
+			},
+		},
+	}
+	report := a.Analyze(incident)
+	if report.GPUUUID != "GPU-RELATED-UUID" {
+		t.Errorf("expected UUID from related event, got %q", report.GPUUUID)
+	}
+}
+
+func TestExtractGPUUUID_Empty(t *testing.T) {
+	a := NewAnalyzer()
+
+	// No UUID available anywhere
+	incident := &events.CorrelatedIncident{
+		ID: "test-uuid-empty",
+		Trigger: events.Event{
+			Type: "k8s",
+			Data: events.K8sEvent{Reason: "Scheduled"},
+		},
+	}
+	report := a.Analyze(incident)
+	if report.GPUUUID != "" {
+		t.Errorf("expected empty UUID, got %q", report.GPUUUID)
+	}
+}
+
+func TestExtractNode_FromRelatedEvents(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Node from related K8s event (trigger has no node)
+	incident := &events.CorrelatedIncident{
+		ID: "test-node-related",
+		Trigger: events.Event{
+			Type: "xid",
+			Data: xid.XIDEvent{XIDCode: 79},
+		},
+		RelatedEvents: []events.Event{
+			{
+				Type: "k8s",
+				Data: events.K8sEvent{NodeName: "gpu-node-from-related"},
+			},
+		},
+	}
+	report := a.Analyze(incident)
+	if report.Node != "gpu-node-from-related" {
+		t.Errorf("expected node from related event, got %q", report.Node)
+	}
+}
+
+func TestExtractNode_Empty(t *testing.T) {
+	a := NewAnalyzer()
+
+	incident := &events.CorrelatedIncident{
+		ID: "test-node-empty",
+		Trigger: events.Event{
+			Type: "xid",
+			Data: xid.XIDEvent{XIDCode: 79},
+		},
+	}
+	report := a.Analyze(incident)
+	if report.Node != "" {
+		t.Errorf("expected empty node, got %q", report.Node)
+	}
+}
+
+func TestExtractXIDCodes_FromRelatedEvents(t *testing.T) {
+	a := NewAnalyzer()
+
+	// XID codes from both trigger and related events, deduplicated
+	incident := &events.CorrelatedIncident{
+		ID: "test-xid-dedup",
+		Trigger: events.Event{
+			Type: "xid",
+			Data: xid.XIDEvent{XIDCode: 79},
+		},
+		RelatedEvents: []events.Event{
+			{Type: "xid", Data: xid.XIDEvent{XIDCode: 48}},
+			{Type: "xid", Data: xid.XIDEvent{XIDCode: 79}}, // duplicate
+		},
+	}
+
+	ctx := a.extractContext(incident)
+	// Should have 79 and 48, but not duplicate 79
+	if len(ctx.xidCodes) != 2 {
+		t.Errorf("expected 2 unique XID codes, got %d: %v", len(ctx.xidCodes), ctx.xidCodes)
+	}
+}
+
+func TestTemplateRecommendations_MissingNodeAndPod(t *testing.T) {
+	a := NewAnalyzer()
+
+	// When node and pod are empty, templates should use placeholder values
+	incident := &events.CorrelatedIncident{
+		ID: "test-template-empty",
+		Trigger: events.Event{
+			Type: "xid",
+			Data: xid.XIDEvent{XIDCode: 79},
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{Throttling: 0x01},
+		},
+	}
+
+	report := a.Analyze(incident)
+	// Should have recommendations even without node/pod info
+	if len(report.Recommendations) == 0 {
+		t.Fatal("expected recommendations even without node/pod")
+	}
+	// Commands should contain placeholder text since no node/pod was set
+	for _, rec := range report.Recommendations {
+		if rec.Command != "" && strings.Contains(rec.Command, "{{") {
+			t.Errorf("command should not contain raw template syntax: %s", rec.Command)
+		}
+	}
+}
+
+func TestAnalyze_NegativeMatch_ThermalNotTriggeredByLowTemp(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Low temperature should NOT match thermal cascade pattern
+	incident := &events.CorrelatedIncident{
+		ID:        "test-no-thermal",
+		Timestamp: time.Now(),
+		Trigger: events.Event{
+			Type: "k8s",
+			Data: events.K8sEvent{
+				Reason:  "Scheduled",
+				Message: "Pod scheduled successfully",
+			},
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{
+				Timestamp:   time.Now(),
+				Temperature: 40, // Cool GPU
+				Throttling:  0,  // No throttling
+			},
+		},
+	}
+
+	report := a.Analyze(incident)
+	if report.RootCause.Category == CategoryThermalCascade {
+		t.Error("low temperature incident should not match thermal cascade pattern")
+	}
+}
+
+func TestAnalyze_NegativeMatch_ECCNotTriggeredByZeroErrors(t *testing.T) {
+	a := NewAnalyzer()
+
+	// Zero ECC errors should NOT match ECC failure pattern
+	incident := &events.CorrelatedIncident{
+		ID:        "test-no-ecc",
+		Timestamp: time.Now(),
+		Trigger: events.Event{
+			Type: "xid",
+			Data: xid.XIDEvent{XIDCode: 13}, // Not an ECC-related XID
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{
+				Timestamp:        time.Now(),
+				ECCUncorrectable: 0,
+				ECCCorrectable:   0,
+			},
+		},
+	}
+
+	report := a.Analyze(incident)
+	if report.RootCause.Category == CategoryECCFailure {
+		t.Error("zero ECC errors should not match ECC failure pattern")
+	}
+}
+
+func TestAnalyze_FindClosestSnapshot(t *testing.T) {
+	a := NewAnalyzer()
+	now := time.Now()
+
+	// Create incident with multiple snapshots at different times
+	// The closest snapshot to the trigger should be used for hardware state
+	incident := &events.CorrelatedIncident{
+		ID:        "test-closest",
+		Timestamp: now,
+		Trigger: events.Event{
+			Type:      "xid",
+			Timestamp: now,
+			Data:      xid.XIDEvent{XIDCode: 48},
+		},
+		GPUSnapshots: []blackbox.GPUSnapshot{
+			{
+				Timestamp:   now.Add(-10 * time.Second),
+				Temperature: 60,
+				MemUsed:     1000,
+				MemTotal:    2000,
+			},
+			{
+				Timestamp:   now.Add(-1 * time.Second), // closest to trigger
+				Temperature: 85,
+				MemUsed:     1500,
+				MemTotal:    2000,
+			},
+			{
+				Timestamp:   now.Add(-5 * time.Second),
+				Temperature: 70,
+				MemUsed:     1200,
+				MemTotal:    2000,
+			},
+		},
+	}
+
+	report := a.Analyze(incident)
+	if report.HardwareState == nil {
+		t.Fatal("expected HardwareState to be populated")
+	}
+	// Closest snapshot has temperature 85
+	if report.HardwareState.Temperature != 85 {
+		t.Errorf("expected temperature from closest snapshot (85), got %d",
+			report.HardwareState.Temperature)
+	}
+}
+
 func TestKnownPatterns_HasRecommendations(t *testing.T) {
 	for _, pattern := range KnownPatterns {
 		if len(pattern.Recommendations) == 0 {

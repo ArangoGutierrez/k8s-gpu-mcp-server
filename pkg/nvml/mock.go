@@ -6,6 +6,7 @@ package nvml
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 )
 
 // Mock is a mock implementation of the NVML Interface for testing.
@@ -171,6 +172,15 @@ type MockDevice struct {
 
 	// Process tracking for testing
 	runningProcesses []ProcessInfoNVML
+
+	// Scenario tracking for dynamic mock behavior
+	throttleAfterN    int
+	throttleReasonVal uint64
+	tempStart         int
+	tempDelta         int
+	errorAfterN       int
+	scenarioError     error
+	callCount         atomic.Int64
 }
 
 // GetName returns the mock device name.
@@ -203,7 +213,21 @@ func (d *MockDevice) GetMemoryInfo(ctx context.Context) (*MemoryInfo, error) {
 }
 
 // GetTemperature returns the mock temperature.
+// If SetTemperatureTrend was called, temperature increases by delta on each call.
+// If SetErrorAfterN was called, returns the configured error after N calls.
 func (d *MockDevice) GetTemperature(ctx context.Context) (uint32, error) {
+	n := d.callCount.Add(1)
+	if d.errorAfterN > 0 && int(n) > d.errorAfterN && d.scenarioError != nil {
+		return 0, d.scenarioError
+	}
+	if d.tempDelta != 0 {
+		// callCount is 1-based, so first call returns tempStart
+		temp := d.tempStart + d.tempDelta*(int(n)-1)
+		if temp < 0 {
+			temp = 0
+		}
+		return uint32(temp), nil
+	}
 	return d.temperature, nil
 }
 
@@ -248,9 +272,18 @@ func (d *MockDevice) GetTotalEccErrors(
 }
 
 // GetCurrentClocksThrottleReasons returns mock throttle reason bitmask.
+// If SetThrottleAfterNIterations was called, throttling activates after N calls.
 func (d *MockDevice) GetCurrentClocksThrottleReasons(
 	ctx context.Context,
 ) (uint64, error) {
+	if d.throttleAfterN > 0 {
+		// Use a separate counter: check callCount for throttle queries
+		n := d.callCount.Load()
+		if int(n) >= d.throttleAfterN {
+			return d.throttleReasonVal, nil
+		}
+		return 0, nil
+	}
 	return d.throttleReasons, nil
 }
 
@@ -366,4 +399,44 @@ func (d *MockDevice) GetComputeRunningProcesses(
 // SetRunningProcesses configures mock running processes for testing.
 func (d *MockDevice) SetRunningProcesses(procs []ProcessInfoNVML) {
 	d.runningProcesses = procs
+}
+
+// SetThrottleAfterNIterations configures the mock to return no throttling
+// for the first n calls to GetTemperature, then return the given throttle
+// reasons bitmask on subsequent calls to GetCurrentClocksThrottleReasons.
+// This simulates throttling that kicks in after sustained load.
+func (d *MockDevice) SetThrottleAfterNIterations(n int, reasons uint64) {
+	d.throttleAfterN = n
+	d.throttleReasonVal = reasons
+}
+
+// SetTemperatureTrend configures the mock to return a linearly increasing
+// temperature starting at start and increasing by delta on each call to
+// GetTemperature. This simulates a GPU heating up over time.
+// For example, SetTemperatureTrend(40, 5) returns 40, 45, 50, 55, ...
+func (d *MockDevice) SetTemperatureTrend(start, delta int) {
+	d.tempStart = start
+	d.tempDelta = delta
+	d.callCount.Store(0)
+}
+
+// SetErrorAfterN configures the mock to return err after n calls to
+// GetTemperature. The first n calls behave normally; subsequent calls
+// return the configured error. This simulates intermittent device failures.
+func (d *MockDevice) SetErrorAfterN(n int, err error) {
+	d.errorAfterN = n
+	d.scenarioError = err
+	d.callCount.Store(0)
+}
+
+// ResetScenario clears all scenario-based mock state, restoring default
+// static behavior. Call this between test cases if reusing a MockDevice.
+func (d *MockDevice) ResetScenario() {
+	d.throttleAfterN = 0
+	d.throttleReasonVal = 0
+	d.tempStart = 0
+	d.tempDelta = 0
+	d.errorAfterN = 0
+	d.scenarioError = nil
+	d.callCount.Store(0)
 }
