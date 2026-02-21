@@ -168,8 +168,20 @@ tolerations:
     effect: NoSchedule
 
 # Pod security configuration
+#
+# [SEC-M-1] Why root is required:
+# NVML (nvidia-ml) requires root (UID 0) to access GPU device files under
+# /dev/nvidia* and to read GPU telemetry via the kernel driver. Non-root access
+# returns NVML_ERROR_NO_PERMISSION for most queries. This is a hard requirement
+# imposed by the NVIDIA driver, not by our application.
+#
+# The gateway component does NOT need root and runs as UID 1000 (see
+# gateway-deployment.yaml). Only the agent DaemonSet requires root.
+#
+# Mitigation: We drop ALL capabilities, set readOnlyRootFilesystem, and disable
+# privilege escalation. Only CAP_SYSLOG is re-added when XID monitoring is needed.
 securityContext:
-  # -- Run as root (may be required for NVML access)
+  # -- Run as root (required for NVML GPU device access — see note above)
   runAsUser: 0
   # -- Prevent privilege escalation
   allowPrivilegeEscalation: false
@@ -179,8 +191,13 @@ securityContext:
   capabilities:
     drop:
       - ALL
-    # CAP_SYSLOG required for /dev/kmsg access (XID error analysis)
-    # SYS_ADMIN required for profiling metrics (like dcgm-exporter)
+    # CAP_SYSLOG: Required for /dev/kmsg access when xidAnalysis.enabled=true.
+    # Without this capability, the agent cannot read kernel messages to detect
+    # XID errors (GPU hardware faults). If you disable xidAnalysis, you can
+    # remove SYSLOG from this list.
+    #
+    # SYS_ADMIN: Required only for DCGM profiling metrics (dcgm.enableProfiling=true).
+    # Not added by default — enable manually if using profiling.
     add:
       - SYSLOG
 
@@ -283,6 +300,15 @@ gateway:
   # When replicas > 1, a PodDisruptionBudget and pod anti-affinity are auto-configured
   replicas: 2
 
+  # -- Anti-affinity mode: "soft" or "hard"
+  # soft (default): preferredDuringSchedulingIgnoredDuringExecution — best-effort
+  #   pod spreading. Pods may co-locate if no other node is available. Safe for
+  #   small clusters or non-critical environments.
+  # hard: requiredDuringSchedulingIgnoredDuringExecution — strict one-pod-per-node.
+  #   Guarantees HA but pods will be unschedulable if fewer nodes than replicas.
+  #   Recommended for production clusters with sufficient nodes.
+  antiAffinity: "soft"
+
   # -- Gateway HTTP port
   port: 8080
 
@@ -315,7 +341,27 @@ gateway:
 # Controls pod-to-pod communication security
 networkPolicy:
   # -- Enable NetworkPolicy for pod-to-pod communication security
-  enabled: false  # -- Allow Prometheus to scrape agent metrics
-  allowPrometheus: false  # -- Namespace selector for Prometheus (if allowPrometheus: true)
+  enabled: false
+  # -- Allow Prometheus to scrape agent metrics
+  allowPrometheus: false
+  # -- Namespace selector for Prometheus (if allowPrometheus: true)
   prometheusNamespaceSelector:
     kubernetes.io/metadata.name: monitoring
+
+  # -- [SEC-M-4] Kubernetes API server CIDR for egress NetworkPolicy
+  # The gateway needs HTTPS access to the K8s API server for pod discovery.
+  # Set this to your cluster's API server CIDR to restrict egress.
+  #
+  # How to find your API server CIDR:
+  #   kubectl get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}'
+  # Then use a /32 for a single API server, e.g., "10.96.0.1/32"
+  #
+  # Common defaults:
+  #   - kubeadm / kind: 10.96.0.1/32
+  #   - EKS: varies per cluster (check VPC settings)
+  #   - GKE: varies per cluster (check master CIDR)
+  #   - AKS: varies per cluster
+  #
+  # Leave empty ("") to allow 0.0.0.0/0 on port 443 (less restrictive, but
+  # functional as a fallback when the API server IP is unknown).
+  apiServerCIDR: ""

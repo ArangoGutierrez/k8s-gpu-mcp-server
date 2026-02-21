@@ -70,7 +70,7 @@ spec:
       port: {{ .Values.gateway.port }}
   {{- end }}
   egress:
-  # Allow gateway to reach agent pods
+  # Allow gateway to reach agent pods (HTTP transport for MCP requests)
   - to:
     - podSelector:
         matchLabels:
@@ -79,7 +79,7 @@ spec:
     ports:
     - protocol: TCP
       port: {{ .Values.transport.http.port }}
-  # Allow DNS resolution
+  # Allow DNS resolution (required for headless service and pod discovery)
   - to:
     - namespaceSelector: {}
       podSelector:
@@ -88,10 +88,17 @@ spec:
     ports:
     - protocol: UDP
       port: 53
-  # Allow access to Kubernetes API for pod discovery
+  # Allow HTTPS access to Kubernetes API server for pod/endpoint discovery.
+  # [SEC-M-4] When apiServerCIDR is set, egress is restricted to that range.
+  # Otherwise falls back to 0.0.0.0/0:443 (port-restricted but IP-unrestricted).
+  # See values.yaml networkPolicy.apiServerCIDR for configuration guidance.
   - to:
     - ipBlock:
+        {{- if .Values.networkPolicy.apiServerCIDR }}
+        cidr: {{ .Values.networkPolicy.apiServerCIDR }}
+        {{- else }}
         cidr: 0.0.0.0/0
+        {{- end }}
     ports:
     - protocol: TCP
       port: 443
