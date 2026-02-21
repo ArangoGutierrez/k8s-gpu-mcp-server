@@ -222,7 +222,8 @@ func (r *Real) probeCapabilities(ctx context.Context) *Capabilities {
 		return buildCapabilities(supported, driverVersion, cudaVersion)
 	}
 
-	// Probe Tier 1 APIs (basic)
+	// Probe Tier 1 APIs (basic) — check context mid-iteration to allow
+	// cancellation during long enumeration sequences.
 	if _, ret := device.GetName(); ret == nvml.SUCCESS {
 		supported[APIName] = true
 	}
@@ -231,6 +232,9 @@ func (r *Real) probeCapabilities(ctx context.Context) *Capabilities {
 	}
 	if _, ret := device.GetPciInfo(); ret == nvml.SUCCESS {
 		supported[APIPCIInfo] = true
+	}
+	if ctx.Err() != nil {
+		return buildCapabilities(supported, driverVersion, cudaVersion)
 	}
 	if _, ret := device.GetMemoryInfo(); ret == nvml.SUCCESS {
 		supported[APIMemoryInfo] = true

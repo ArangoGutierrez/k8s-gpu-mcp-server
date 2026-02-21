@@ -93,7 +93,7 @@ func NewExplainer() (*Explainer, error) {
 }
 
 // GenerateExplanation produces a full human-readable explanation of the incident.
-func (e *Explainer) GenerateExplanation(incident *events.CorrelatedIncident) string {
+func (e *Explainer) GenerateExplanation(incident *events.CorrelatedIncident) (result string) {
 	if incident == nil {
 		return "No incident data available."
 	}
@@ -106,6 +106,13 @@ func (e *Explainer) GenerateExplanation(incident *events.CorrelatedIncident) str
 		tmpl = e.explanationTemplates["unknown"]
 	}
 
+	// Recover from panics in template execution caused by malformed data
+	defer func() {
+		if r := recover(); r != nil {
+			result = fmt.Sprintf("Error generating explanation: template panic: %v", r)
+		}
+	}()
+
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return fmt.Sprintf("Error generating explanation: %v", err)
@@ -115,7 +122,7 @@ func (e *Explainer) GenerateExplanation(incident *events.CorrelatedIncident) str
 }
 
 // GenerateSummary produces a one-line summary of the incident.
-func (e *Explainer) GenerateSummary(incident *events.CorrelatedIncident) string {
+func (e *Explainer) GenerateSummary(incident *events.CorrelatedIncident) (result string) {
 	if incident == nil {
 		return "No incident data available."
 	}
@@ -127,6 +134,13 @@ func (e *Explainer) GenerateSummary(incident *events.CorrelatedIncident) string 
 	if !ok {
 		tmpl = e.summaryTemplates["unknown"]
 	}
+
+	// Recover from panics in template execution caused by malformed data
+	defer func() {
+		if r := recover(); r != nil {
+			result = fmt.Sprintf("GPU failure on %s", data.Node)
+		}
+	}()
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

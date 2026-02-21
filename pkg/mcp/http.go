@@ -15,13 +15,20 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// NVMLChecker is an optional interface to check NVML initialization status.
+type NVMLChecker interface {
+	// IsInitialized returns true if NVML has been successfully initialized.
+	IsInitialized() bool
+}
+
 // HTTPServer wraps the MCP server with HTTP transport.
 type HTTPServer struct {
-	mcpServer  *server.MCPServer
-	httpServer *http.Server
-	addr       string
-	version    string
-	ready      chan struct{}
+	mcpServer   *server.MCPServer
+	httpServer  *http.Server
+	addr        string
+	version     string
+	ready       chan struct{}
+	nvmlChecker NVMLChecker
 }
 
 // NewHTTPServer creates an HTTP transport server.
@@ -34,8 +41,18 @@ func NewHTTPServer(mcpServer *server.MCPServer, addr, version string) *HTTPServe
 	}
 }
 
+// SetNVMLChecker sets the optional NVML checker for startup warnings.
+func (h *HTTPServer) SetNVMLChecker(checker NVMLChecker) {
+	h.nvmlChecker = checker
+}
+
 // ListenAndServe starts the HTTP server.
 func (h *HTTPServer) ListenAndServe(ctx context.Context) error {
+	// Warn if NVML is not initialized — tool calls will fail at runtime
+	if h.nvmlChecker != nil && !h.nvmlChecker.IsInitialized() {
+		klog.Warningf("NVML is not initialized; GPU tools will return errors until the driver is available")
+	}
+
 	mux := http.NewServeMux()
 
 	// MCP endpoint - Streamable HTTP transport
@@ -143,11 +160,16 @@ func (h *HTTPServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
-	// TODO: Check NVML initialization status
+	// Report degraded readiness if NVML is not initialized
+	status := "ready"
+	if h.nvmlChecker != nil && !h.nvmlChecker.IsInitialized() {
+		klog.V(4).InfoS("readyz: NVML not initialized, reporting degraded")
+		status = "degraded"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status": "ready",
+		"status": status,
 	}); err != nil {
 		klog.ErrorS(err, "failed to encode readyz response")
 	}

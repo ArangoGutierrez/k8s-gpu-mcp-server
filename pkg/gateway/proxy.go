@@ -74,14 +74,16 @@ func (p *ProxyHandler) Handle(
 	if err != nil {
 		klog.ErrorS(err, "failed to build MCP request", "tool", p.toolName)
 		return mcp.NewToolResultError(
-			fmt.Sprintf("failed to build request: %v", err)), nil
+			fmt.Sprintf("tool %q: failed to build request: %v",
+				p.toolName, err)), nil
 	}
 
 	// Route to all nodes
 	results, err := p.router.RouteToAllNodes(ctx, mcpRequest)
 	if err != nil {
 		return mcp.NewToolResultError(
-			fmt.Sprintf("failed to route to nodes: %v", err)), nil
+			fmt.Sprintf("tool %q: failed to route to nodes: %v",
+				p.toolName, err)), nil
 	}
 
 	// Aggregate results (parsing differs by mode)
@@ -90,7 +92,8 @@ func (p *ProxyHandler) Handle(
 	jsonBytes, err := json.MarshalIndent(aggregated, "", "  ")
 	if err != nil {
 		return mcp.NewToolResultError(
-			fmt.Sprintf("failed to marshal response: %v", err)), nil
+			fmt.Sprintf("tool %q: failed to marshal response: %v",
+				p.toolName, err)), nil
 	}
 
 	klog.InfoS("proxy_tool completed",
@@ -208,10 +211,25 @@ func (p *ProxyHandler) aggregateGPUInventory(
 							// Flatten memory to memory_total_gb
 							gpu := flattenGPUInfo(dev)
 							gpus = append(gpus, gpu)
+						} else {
+							klog.V(3).InfoS(
+								"type assertion failed for GPU device entry",
+								"node", result.NodeName,
+								"type", fmt.Sprintf("%T", d))
 						}
 					}
 					nodeData["gpus"] = gpus
+				} else {
+					klog.V(3).InfoS(
+						"type assertion failed for devices field",
+						"node", result.NodeName,
+						"type", fmt.Sprintf("%T", inv["devices"]))
 				}
+			} else {
+				klog.V(3).InfoS(
+					"type assertion failed for inventory response",
+					"node", result.NodeName,
+					"type", fmt.Sprintf("%T", parsed))
 			}
 		}
 
