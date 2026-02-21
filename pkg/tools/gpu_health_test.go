@@ -15,6 +15,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test threshold constants — extracted from gpu_health.go source code to avoid
+// magic numbers in assertions. These mirror the thresholds the production code
+// uses for status classification.
+const (
+	// Temperature thresholds (from gpu_health.go lines 265-272).
+	// testTempSlowdown is the device-reported slowdown threshold returned by
+	// the mock's GetTemperatureThreshold (TempThresholdSlowdown).
+	testTempSlowdown uint32 = 82
+	// testTempShutdown is the device-reported shutdown threshold returned by
+	// the mock's GetTemperatureThreshold (TempThresholdShutdown).
+	testTempShutdown uint32 = 90
+	// testTempElevatedMargin is the degrees below slowdown that triggers "elevated".
+	testTempElevatedMargin uint32 = 10
+
+	// Power usage thresholds (from gpu_health.go lines 409-416).
+	powerHighPercent     = 95.0 // >= 95% of limit
+	powerElevatedPercent = 80.0 // >= 80% of limit
+	powerOverLimitMult   = 1.10 // > 100% of limit
+
+	// Health score status thresholds (from gpu_health.go lines 760-769).
+	scoreHealthyThreshold  = 90 // >= 90 = healthy
+	scoreWarningThreshold  = 70 // >= 70 = warning
+	scoreDegradedThreshold = 50 // >= 50 = degraded
+	// < 50 = critical
+
+	// Mock device power limit (T4 profile, milliwatts).
+	testPowerLimitMW uint32 = 70000
+)
+
+// requireValidMCPResponse validates that a CallToolResult conforms to the MCP
+// response contract: it must not be an error, must contain at least one
+// TextContent element, and the text must be valid JSON containing the expected
+// top-level fields for a GPUHealthResponse.
+func requireValidMCPResponse(t *testing.T, result *mcp.CallToolResult) GPUHealthResponse {
+	t.Helper()
+
+	require.NotNil(t, result, "CallToolResult must not be nil")
+	assert.False(t, result.IsError, "CallToolResult.IsError should be false for successful calls")
+
+	require.NotEmpty(t, result.Content, "CallToolResult.Content must have at least one element")
+
+	textContent, ok := mcp.AsTextContent(result.Content[0])
+	require.True(t, ok, "first Content element must be TextContent")
+	require.NotEmpty(t, textContent.Text, "TextContent.Text must not be empty")
+
+	var response GPUHealthResponse
+	err := json.Unmarshal([]byte(textContent.Text), &response)
+	require.NoError(t, err, "TextContent.Text must be valid JSON")
+
+	// Validate expected top-level fields are present (non-zero-value check
+	// for the string field "status" which is always set).
+	assert.NotEmpty(t, response.Status, "response must have a status field")
+	assert.GreaterOrEqual(t, response.DeviceCount, 0, "device_count must be >= 0")
+
+	return response
+}
+
 func TestNewGPUHealthHandler(t *testing.T) {
 	mockClient := nvml.NewMock(2)
 	handler := NewGPUHealthHandler(mockClient)
@@ -33,19 +90,12 @@ func TestGPUHealthHandler_Handle_HealthyGPU(t *testing.T) {
 	result, err := handler.Handle(ctx, request)
 
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.IsError)
 
-	// Parse response
-	textContent, ok := mcp.AsTextContent(result.Content[0])
-	require.True(t, ok, "content should be TextContent")
-
-	var response GPUHealthResponse
-	err = json.Unmarshal([]byte(textContent.Text), &response)
-	require.NoError(t, err)
+	// Validate MCP response contract
+	response := requireValidMCPResponse(t, result)
 
 	assert.Equal(t, "healthy", response.Status)
-	assert.GreaterOrEqual(t, response.OverallScore, 90)
+	assert.GreaterOrEqual(t, response.OverallScore, scoreHealthyThreshold)
 	assert.Equal(t, 1, response.DeviceCount)
 	assert.Equal(t, 1, response.HealthyCount)
 	assert.Equal(t, 0, response.DegradedCount)
@@ -60,7 +110,7 @@ func TestGPUHealthHandler_Handle_HealthyGPU(t *testing.T) {
 	assert.NotEmpty(t, gpu.UUID)
 	assert.NotEmpty(t, gpu.PCIBusID)
 	assert.Equal(t, "healthy", gpu.Status)
-	assert.GreaterOrEqual(t, gpu.HealthScore, 90)
+	assert.GreaterOrEqual(t, gpu.HealthScore, scoreHealthyThreshold)
 	assert.Equal(t, "normal", gpu.Temperature.Status)
 	assert.Equal(t, "normal", gpu.Memory.Status)
 	assert.Equal(t, "normal", gpu.Power.Status)
@@ -76,14 +126,9 @@ func TestGPUHealthHandler_Handle_MultipleGPUs(t *testing.T) {
 	result, err := handler.Handle(ctx, request)
 
 	require.NoError(t, err)
-	require.NotNil(t, result)
 
-	textContent, ok := mcp.AsTextContent(result.Content[0])
-	require.True(t, ok)
-
-	var response GPUHealthResponse
-	err = json.Unmarshal([]byte(textContent.Text), &response)
-	require.NoError(t, err)
+	// Validate MCP response contract
+	response := requireValidMCPResponse(t, result)
 
 	assert.Equal(t, 4, response.DeviceCount)
 	assert.Len(t, response.GPUs, 4)
@@ -148,37 +193,37 @@ func TestGPUHealthHandler_checkTemperature(t *testing.T) {
 		name       string
 		temp       uint32
 		wantStatus string
-		wantMargin int
+		wantMargin int // margin = slowdown threshold - temp
 	}{
 		{
 			name:       "normal_low",
 			temp:       30,
 			wantStatus: "normal",
-			wantMargin: 52,
+			wantMargin: int(testTempSlowdown) - 30, // 52
 		},
 		{
 			name:       "normal_mid",
 			temp:       60,
 			wantStatus: "normal",
-			wantMargin: 22,
+			wantMargin: int(testTempSlowdown) - 60, // 22
 		},
 		{
-			name:       "elevated",
-			temp:       75,
+			name:       "elevated",                                    // within tempElevatedMargin of slowdown
+			temp:       testTempSlowdown - testTempElevatedMargin + 3, // 75
 			wantStatus: "elevated",
-			wantMargin: 7,
+			wantMargin: int(testTempSlowdown) - int(testTempSlowdown-testTempElevatedMargin+3), // 7
 		},
 		{
-			name:       "high",
-			temp:       85,
+			name:       "high",               // at or above slowdown, below shutdown
+			temp:       testTempSlowdown + 3, // 85
 			wantStatus: "high",
-			wantMargin: -3,
+			wantMargin: int(testTempSlowdown) - int(testTempSlowdown+3), // -3
 		},
 		{
-			name:       "critical",
-			temp:       92,
+			name:       "critical",           // at or above shutdown
+			temp:       testTempShutdown + 2, // 92
 			wantStatus: "critical",
-			wantMargin: -10,
+			wantMargin: int(testTempSlowdown) - int(testTempShutdown+2), // -10
 		},
 	}
 
@@ -192,8 +237,10 @@ func TestGPUHealthHandler_checkTemperature(t *testing.T) {
 			assert.Equal(t, tt.temp, result.Current)
 			assert.Equal(t, tt.wantStatus, result.Status)
 			assert.Equal(t, tt.wantMargin, result.Margin)
-			assert.Equal(t, uint32(82), result.Threshold)
-			assert.Equal(t, uint32(90), result.Max)
+			assert.Equal(t, testTempSlowdown, result.Threshold,
+				"threshold should match device slowdown temp")
+			assert.Equal(t, testTempShutdown, result.Max,
+				"max should match device shutdown temp")
 		})
 	}
 }
@@ -272,27 +319,27 @@ func TestGPUHealthHandler_checkPower(t *testing.T) {
 	}{
 		{
 			name:       "normal_low",
-			power:      14000, // 20% of 70000
+			power:      uint32(float64(testPowerLimitMW) * 0.20), // 20% of limit
 			wantStatus: "normal",
 		},
 		{
 			name:       "normal_high",
-			power:      49000, // 70% of 70000
+			power:      uint32(float64(testPowerLimitMW) * 0.70), // 70% of limit
 			wantStatus: "normal",
 		},
 		{
 			name:       "elevated",
-			power:      59500, // 85% of 70000
+			power:      uint32(float64(testPowerLimitMW) * 0.85), // 85% of limit (>= 80%)
 			wantStatus: "elevated",
 		},
 		{
 			name:       "high",
-			power:      68600, // 98% of 70000
+			power:      uint32(float64(testPowerLimitMW) * 0.98), // 98% of limit (>= 95%)
 			wantStatus: "high",
 		},
 		{
 			name:       "over_limit",
-			power:      77000, // 110% of 70000
+			power:      uint32(float64(testPowerLimitMW) * powerOverLimitMult), // 110% of limit
 			wantStatus: "over_limit",
 		},
 	}
@@ -305,7 +352,8 @@ func TestGPUHealthHandler_checkPower(t *testing.T) {
 
 			assert.Equal(t, tt.power, result.Current)
 			assert.Equal(t, tt.wantStatus, result.Status)
-			assert.Equal(t, uint32(70000), result.Limit)
+			assert.Equal(t, testPowerLimitMW, result.Limit,
+				"limit should match mock device power management limit")
 		})
 	}
 }
@@ -446,31 +494,31 @@ func TestGPUHealthHandler_determineStatus(t *testing.T) {
 	}{
 		{
 			name:   "healthy_high_score",
-			score:  95,
+			score:  scoreHealthyThreshold + 5, // 95, well above healthy threshold
 			issues: []HealthIssue{},
 			want:   "healthy",
 		},
 		{
 			name:   "healthy_threshold",
-			score:  90,
+			score:  scoreHealthyThreshold, // exactly at healthy boundary
 			issues: []HealthIssue{},
 			want:   "healthy",
 		},
 		{
 			name:   "warning",
-			score:  75,
+			score:  scoreWarningThreshold + 5, // 75, between warning and healthy
 			issues: []HealthIssue{},
 			want:   "warning",
 		},
 		{
 			name:   "degraded",
-			score:  55,
+			score:  scoreDegradedThreshold + 5, // 55, between degraded and warning
 			issues: []HealthIssue{},
 			want:   "degraded",
 		},
 		{
 			name:   "critical_score",
-			score:  40,
+			score:  scoreDegradedThreshold - 10, // 40, below degraded threshold
 			issues: []HealthIssue{},
 			want:   "critical",
 		},
@@ -637,15 +685,9 @@ func TestGPUHealthHandler_Handle_DegradedMode(t *testing.T) {
 	result, err := handler.Handle(ctx, request)
 
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.IsError)
 
-	textContent, ok := mcp.AsTextContent(result.Content[0])
-	require.True(t, ok)
-
-	var response GPUHealthResponse
-	err = json.Unmarshal([]byte(textContent.Text), &response)
-	require.NoError(t, err)
+	// Validate MCP response contract
+	response := requireValidMCPResponse(t, result)
 
 	// Verify degraded mode fields
 	assert.True(t, response.Degraded)
@@ -665,14 +707,9 @@ func TestGPUHealthHandler_Handle_FullCapabilities(t *testing.T) {
 	result, err := handler.Handle(ctx, request)
 
 	require.NoError(t, err)
-	require.NotNil(t, result)
 
-	textContent, ok := mcp.AsTextContent(result.Content[0])
-	require.True(t, ok)
-
-	var response GPUHealthResponse
-	err = json.Unmarshal([]byte(textContent.Text), &response)
-	require.NoError(t, err)
+	// Validate MCP response contract
+	response := requireValidMCPResponse(t, result)
 
 	// Verify not degraded with full capabilities
 	assert.False(t, response.Degraded)
@@ -698,14 +735,9 @@ func TestGPUHealthHandler_Handle_Tier2Health(t *testing.T) {
 	result, err := handler.Handle(ctx, request)
 
 	require.NoError(t, err)
-	require.NotNil(t, result)
 
-	textContent, ok := mcp.AsTextContent(result.Content[0])
-	require.True(t, ok)
-
-	var response GPUHealthResponse
-	err = json.Unmarshal([]byte(textContent.Text), &response)
-	require.NoError(t, err)
+	// Validate MCP response contract
+	response := requireValidMCPResponse(t, result)
 
 	// Tier2Health is still degraded (not full capabilities)
 	assert.True(t, response.Degraded)
@@ -939,7 +971,7 @@ func (d *mockDeviceWithPower) GetPowerUsage(ctx context.Context) (uint32, error)
 func (d *mockDeviceWithPower) GetPowerManagementLimit(
 	ctx context.Context,
 ) (uint32, error) {
-	return 70000, nil // 70W TDP for T4
+	return testPowerLimitMW, nil // 70W TDP for T4
 }
 
 // mockHealthyNVML returns a single GPU with healthy values
