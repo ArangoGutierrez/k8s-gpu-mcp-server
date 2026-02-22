@@ -43,6 +43,7 @@ type Server struct {
 	gatewayMode bool
 	k8sClient   *k8s.Client
 	oneshot     int
+	tlsConfig   *TLSConfig
 	wg          sync.WaitGroup // goroutine lifecycle coordination
 }
 
@@ -74,6 +75,8 @@ type Config struct {
 	Recorder *blackbox.Recorder
 	// XIDWatcher is the XID event watcher (optional)
 	XIDWatcher *xid.Watcher
+	// TLS holds optional TLS configuration for the HTTP server
+	TLS *TLSConfig
 }
 
 // New creates a new MCP server instance.
@@ -112,6 +115,7 @@ func New(cfg Config) (*Server, error) {
 		gatewayMode: cfg.GatewayMode,
 		k8sClient:   cfg.K8sClient,
 		oneshot:     cfg.Oneshot,
+		tlsConfig:   cfg.TLS,
 	}
 
 	// Create MCP server with prompt capabilities
@@ -342,9 +346,13 @@ func (s *Server) runStdio(ctx context.Context) error {
 // runHTTP runs the server with HTTP transport.
 func (s *Server) runHTTP(ctx context.Context) error {
 	klog.InfoS("MCP server starting",
-		"transport", "http", "addr", s.httpAddr, "mode", s.mode)
+		"transport", "http", "addr", s.httpAddr, "mode", s.mode,
+		"tls", s.tlsConfig != nil && s.tlsConfig.Enabled())
 
 	httpServer := NewHTTPServer(s.mcpServer, s.httpAddr, s.version)
+	if s.tlsConfig != nil && s.tlsConfig.Enabled() {
+		httpServer.SetTLSConfig(s.tlsConfig)
+	}
 	return httpServer.ListenAndServe(ctx)
 }
 

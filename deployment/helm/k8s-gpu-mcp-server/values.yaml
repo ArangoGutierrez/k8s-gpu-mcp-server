@@ -253,6 +253,17 @@ transport:
     # -- HTTP listen address
     addr: "0.0.0.0"
 
+# TLS configuration (optional)
+# When enabled, the agent serves HTTPS instead of HTTP.
+# Certificates are loaded from files, supporting K8s Secrets and cert-manager.
+# Certificate rotation is automatic (file mtime checked every 5 minutes).
+tls:
+  # -- Enable TLS for the agent HTTP server
+  enabled: false
+  # -- Name of a Kubernetes Secret (type: kubernetes.io/tls) containing tls.crt and tls.key
+  # The secret is mounted into the pod at /etc/tls/agent/
+  secretName: ""
+
 # Service configuration (for HTTP mode)
 service:
   # -- Enable service for agent pods (should be enabled when transport.mode=http)
