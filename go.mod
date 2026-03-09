@@ -8,14 +8,16 @@ require (
 	// later) once NVIDIA publishes one. Track: https://github.com/NVIDIA/go-nvml/releases
 	github.com/NVIDIA/go-nvml v0.13.0-1
 	github.com/google/uuid v1.6.0
-	github.com/mark3labs/mcp-go v0.43.2
+	github.com/mark3labs/mcp-go v0.45.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
-	k8s.io/api v0.35.0
-	k8s.io/apimachinery v0.35.0
-	k8s.io/client-go v0.35.0
-	k8s.io/klog/v2 v2.130.1
+	k8s.io/api v0.35.2
+	k8s.io/apimachinery v0.35.2
+	k8s.io/client-go v0.35.2
+	k8s.io/klog/v2 v2.140.0
 )
+
+require golang.org/x/time v0.9.0
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -58,7 +60,6 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/term v0.37.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
-	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
