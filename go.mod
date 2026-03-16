@@ -17,7 +17,7 @@ require (
 	k8s.io/klog/v2 v2.140.0
 )
 
-require golang.org/x/time v0.9.0
+require golang.org/x/time v0.15.0
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
