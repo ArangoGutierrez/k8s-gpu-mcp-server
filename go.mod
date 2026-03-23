@@ -11,13 +11,13 @@ require (
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
-	k8s.io/api v0.35.2
-	k8s.io/apimachinery v0.35.2
-	k8s.io/client-go v0.35.2
+	k8s.io/api v0.35.3
+	k8s.io/apimachinery v0.35.3
+	k8s.io/client-go v0.35.3
 	k8s.io/klog/v2 v2.140.0
 )
 
-require golang.org/x/time v0.9.0
+require golang.org/x/time v0.15.0
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
