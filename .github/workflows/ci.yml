@@ -62,7 +62,7 @@ jobs:
         run: go test ./... -v -count=1 -race -coverprofile=coverage.out
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         if: always()
         with:
           file: ./coverage.out
